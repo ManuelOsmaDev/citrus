@@ -63,11 +63,11 @@ a { color: inherit; }
 
 /* ---------- Navegación ---------- */
 .nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-.nav-in { display: flex; align-items: center; gap: 28px; height: 60px; }
+.nav-in { display: flex; align-items: center; gap: 28px; height: 72px; }
 .brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 620; font-size: 16px; letter-spacing: -.015em; text-decoration: none; }
-.wordmark { display: inline-flex; align-items: baseline; font: 650 22px/1 var(--sans); letter-spacing: -.02em; }
+.wordmark { display: inline-flex; align-items: baseline; font: 700 32px/1 var(--sans); letter-spacing: -.035em; }
 .wm-i { position: relative; display: inline-block; }
-.wm-dot { position: absolute; left: 50%; bottom: .78em; width: .25em; height: .25em; transform: translateX(-50%); background: currentColor; -webkit-mask: url("assets/mark.svg") center / contain no-repeat; mask: url("assets/mark.svg") center / contain no-repeat; }
+.wm-dot { position: absolute; left: 50%; bottom: .74em; width: .4em; height: .4em; transform: translateX(-50%); background: var(--accent); -webkit-mask: url("assets/mark.svg") center / contain no-repeat; mask: url("assets/mark.svg") center / contain no-repeat; }
 .nav-links { display: flex; gap: 22px; margin-right: auto; font-size: 14px; }
 .nav-links a { color: var(--text-2); text-decoration: none; transition: color .15s; }
 .nav-links a:hover { color: var(--text); }
