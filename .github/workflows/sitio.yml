@@ -3,8 +3,7 @@ name: Publicar la web de Citrus
 on:
   push:
     branches: [main]
-  release:
-    types: [published]
+  # Tras crear un Release, córrelo a mano: GitHub Pages solo publica desde main, no desde la etiqueta.
   workflow_dispatch:
 
 permissions:
