@@ -71,9 +71,7 @@ fn draw_topbar() {
   if topbar_host == nil { return nil }
   clear(topbar_host)
   let left = append(topbar_host, el("div", "tb-left"))
-  let brand = append(left, el("div", "brand"))
-  append(brand, logo(21))
-  add_text(brand, "Citrus")
+  append(left, wordmark())
   if app.workspace != nil {
     append(left, el("div", "sep"))
     let crumb = append(left, el("button", "crumb"))

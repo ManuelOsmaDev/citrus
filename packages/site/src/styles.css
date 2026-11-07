@@ -65,7 +65,9 @@ a { color: inherit; }
 .nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
 .nav-in { display: flex; align-items: center; gap: 28px; height: 60px; }
 .brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 620; font-size: 16px; letter-spacing: -.015em; text-decoration: none; }
-.brand img { width: 24px; height: 24px; }
+.wordmark { display: inline-flex; align-items: baseline; font: 650 22px/1 var(--sans); letter-spacing: -.02em; }
+.wm-i { position: relative; display: inline-block; }
+.wm-dot { position: absolute; left: 50%; bottom: .78em; width: .25em; height: .25em; transform: translateX(-50%); background: currentColor; -webkit-mask: url("assets/mark.svg") center / contain no-repeat; mask: url("assets/mark.svg") center / contain no-repeat; }
 .nav-links { display: flex; gap: 22px; margin-right: auto; font-size: 14px; }
 .nav-links a { color: var(--text-2); text-decoration: none; transition: color .15s; }
 .nav-links a:hover { color: var(--text); }
@@ -82,7 +84,7 @@ a { color: inherit; }
 /* ---------- Portada ---------- */
 .hero { position: relative; overflow: hidden; padding-top: clamp(48px, 9vw, 104px); padding-bottom: clamp(48px, 7vw, 88px); background: radial-gradient(820px 480px at 86% 0%, var(--accent-soft), transparent 70%); }
 .hero-in { position: relative; }
-.hero-slice { position: absolute; top: -220px; right: -220px; width: 720px; height: 720px; max-width: none; opacity: .07; animation: spin 140s linear infinite; pointer-events: none; }
+.hero-slice { position: absolute; top: -220px; right: -220px; width: 720px; height: 720px; max-width: none; opacity: .05; background: var(--text); -webkit-mask: url("assets/mark.svg") center / contain no-repeat; mask: url("assets/mark.svg") center / contain no-repeat; animation: spin 140s linear infinite; pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 720px) { .hero-slice { width: 420px; height: 420px; top: -130px; right: -170px; } }
 .rise { animation: rise .8s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 70ms); }

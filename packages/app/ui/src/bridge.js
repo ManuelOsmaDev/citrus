@@ -36,6 +36,17 @@
   };
 
   const MONO_FONT = '"Geist Mono", "Cascadia Code", Consolas, ui-monospace, monospace';
+  function sliceSvg(size) {
+    const holder = document.createElement("span");
+    holder.innerHTML = `<svg aria-hidden="true" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14.7" fill="none" stroke="currentColor" stroke-width="2"/><g fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(0 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(45 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(90 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(135 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(180 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(225 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(270 16 16)"/><path d="M16 15.3 L13.3 5.6 A10.6 10.6 0 0 1 18.7 5.6 Z" transform="rotate(315 16 16)"/></g></svg>`;
+    const svg = holder.firstChild;
+    if (size) {
+      svg.setAttribute("width", String(size));
+      svg.setAttribute("height", String(size));
+    }
+    return svg;
+  }
+
   const reducedTheme = () => document.documentElement.dataset.theme || "dark";
 
   // ---------- Monaco ----------
@@ -148,31 +159,23 @@
           return svg;
         },
 
-        // Rodaja de mandarina: la marca de Citrus.
+        // La rodaja de Citrus, en el color del texto que la rodea.
         logo(size) {
-          const svg = document.createElementNS(SVG, "svg");
-          const px = String(size ?? 22);
-          svg.setAttribute("viewBox", "0 0 32 32");
-          svg.setAttribute("width", px);
-          svg.setAttribute("height", px);
-          svg.setAttribute("aria-hidden", "true");
-          const add = (tag, attrs) => {
-            const e = document.createElementNS(SVG, tag);
-            for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-            svg.appendChild(e);
-          };
-          add("circle", { cx: 16, cy: 16, r: 15, fill: "#f28c28" });
-          add("circle", { cx: 16, cy: 16, r: 12.4, fill: "#ffe3b8" });
-          for (let i = 0; i < 8; i++) {
-            add("path", {
-              d: "M16 15 L12.6 6.2 A10.4 10.4 0 0 1 19.4 6.2 Z",
-              fill: "#f59e2e",
-              "stroke-linejoin": "round",
-              transform: `rotate(${i * 45} 16 16)`,
-            });
-          }
-          add("circle", { cx: 16, cy: 16, r: 1.6, fill: "#ffe3b8" });
-          return svg;
+          return sliceSvg(size ?? 22);
+        },
+        // El nombre con la rodaja como punto de la i.
+        wordmark() {
+          const word = document.createElement("span");
+          word.className = "wordmark";
+          word.setAttribute("aria-label", "Citrus");
+          const i = document.createElement("span");
+          i.className = "wm-i";
+          i.textContent = "ı";
+          const dot = sliceSvg(null);
+          dot.classList.add("wm-dot");
+          i.appendChild(dot);
+          word.append("c", i, "trus");
+          return word;
         },
 
         on_stop(e, event, f) {

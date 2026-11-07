@@ -157,6 +157,9 @@ input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var
 .tb-left, .tb-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tb-right { justify-content: flex-end; }
 .titlebar button, .titlebar select, .no-drag { -webkit-app-region: no-drag; }
+.wordmark { display: inline-flex; align-items: baseline; flex: none; font: 650 19px/1 var(--sans); letter-spacing: -.02em; color: var(--text); }
+.wm-i { position: relative; display: inline-block; }
+.wm-dot { position: absolute; left: 50%; bottom: .78em; width: .25em; height: .25em; transform: translateX(-50%); }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 620; letter-spacing: -.015em; font-size: 14px; flex: none; }
 .crumb { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: var(--r-s); background: none; color: var(--text-2); cursor: pointer; min-width: 0; transition: background .14s, color .14s; }
 .crumb:hover { background: var(--surface-3); color: var(--text); }

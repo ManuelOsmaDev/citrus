@@ -90,13 +90,24 @@ fn yaml_block(label, lines) {
 
 // ---------- Navegación ----------
 
+// El nombre con la rodaja como punto de la i. La rodaja toma el color del texto.
+fn wordmark() {
+  let word = el("span", "wordmark")
+  attr(word, "aria-hidden", "true")
+  add_text(word, "c")
+  let i = append(word, el("span", "wm-i", "ı"))
+  append(i, el("span", "wm-dot"))
+  add_text(word, "trus")
+  word
+}
+
 fn draw_nav() {
   let nav = el("header", "nav")
   append(nav, el("div", "progress"))
   let inner = append(nav, el("div", "wrap nav-in"))
   let brand = append(inner, link("brand", nil, "#inicio"))
-  append(brand, image("assets/logo.svg", ""))
-  add_text(brand, "Citrus")
+  attr(brand, "aria-label", "Citrus, inicio")
+  append(brand, wordmark())
   let links = append(inner, el("nav", "nav-links"))
   attr(links, "aria-label", "Secciones")
   for item in [["Qué es", "#que-es"], ["Funciones", "#funciones"], ["Descargar", "#descargar"], ["Usar", "#usar"], ["Estado", "#estado"]] {
@@ -297,7 +308,7 @@ fn draw_console() {
 fn draw_hero() {
   let hero = el("div", "hero")
   attr(hero, "id", "inicio")
-  let slice = append(hero, image("assets/logo.svg", "", "hero-slice"))
+  let slice = append(hero, el("span", "hero-slice"))
   attr(slice, "aria-hidden", "true")
   let w = append(hero, el("div", "wrap hero-in"))
   append(w, el("h1", "rise", "Lo que tu endpoint respondió, y lo que pasó adentro."))
