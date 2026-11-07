@@ -1,0 +1,67 @@
+{
+  "name": "@citrus/app",
+  "version": "0.1.0",
+  "description": "Citrus: el cliente de APIs para backends serverless.",
+  "license": "MIT",
+  "type": "module",
+  "main": "main/main.js",
+  "scripts": {
+    "build": "node scripts/build-ui.mjs",
+    "start": "npm run build && electron .",
+    "test:e2e": "npm run build && node test/e2e.mjs",
+    "test:instalado": "node test/e2e-instalado.mjs",
+    "dist": "npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@citrus/core": "0.1.0",
+    "@fontsource-variable/geist": "^5.1.0",
+    "@fontsource-variable/geist-mono": "^5.1.0",
+    "monaco-editor": "0.52.2"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "playwright-core": "^1.49.0",
+    "tangerine-lang": "3.1.0",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "Los autores de Citrus",
+  "build": {
+    "appId": "dev.citrus.app",
+    "productName": "Citrus",
+    "electronVersion": "33.4.11",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main/**",
+      "ui/dist/**",
+      "package.json",
+      "!node_modules/monaco-editor/{esm,dev}/**",
+      "!**/*.map",
+      "!**/*.d.ts",
+      "!**/*.md"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Citrus-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Citrus"
+    }
+  }
+}

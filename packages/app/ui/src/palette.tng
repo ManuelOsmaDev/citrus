@@ -1,0 +1,147 @@
+// Paleta de comandos (Ctrl+K): salta a cualquier request o ejecuta cualquier acción.
+import { app, open_request } from "./state.tng"
+import { span } from "./widgets.tng"
+
+fn flatten(nodes, trail, out) {
+  for node in nodes {
+    if node.kind == "folder" {
+      flatten(node.children, trail + [node.name], out)
+    } else if node.type != "invalid" {
+      out.push({ node: node, trail: trail.join(" / ") })
+    }
+  }
+  out
+}
+
+// Coincidencia por subsecuencia: "crped" encuentra "Crear pedido". Premia letras seguidas.
+fn score(text, needle) {
+  if needle.is_empty() { return 1 }
+  let hay = text.lower()
+  var at = 0
+  var total = 0
+  var streak = 0
+  for c in needle {
+    var found = false
+    while at < hay.len() {
+      let here = hay[at]
+      at += 1
+      if here == c {
+        found = true
+        streak += 1
+        total += streak
+        break
+      }
+      streak = 0
+    }
+    if !found { return 0 }
+  }
+  total
+}
+
+export fn open_palette(actions) {
+  if query(".palette") != nil { return nil }
+  let overlay = append(query("body"), el("div", "overlay palette-overlay"))
+  let panel = append(overlay, el("div", "palette"))
+  attr(panel, "role", "dialog")
+  attr(panel, "aria-label", "Paleta de comandos")
+  let bar = append(panel, el("div", "palette-input"))
+  append(bar, icon("search", 17))
+  let input = append(bar, el("input"))
+  attr(input, "placeholder", "Busca una request o escribe una acción")
+  attr(input, "aria-label", "Buscar")
+  attr(input, "spellcheck", "false")
+  let list = append(panel, el("div", "palette-list"))
+  attr(list, "role", "listbox")
+  let foot = append(panel, el("div", "palette-foot"))
+  append(foot, span(nil, "↑↓ moverse"))
+  append(foot, span(nil, "Enter abrir"))
+  append(foot, span(nil, "Esc cerrar"))
+
+  var items = []
+  var selected = 0
+
+  fn close() {
+    remove(overlay)
+  }
+
+  fn run(item) {
+    close()
+    item.run()
+  }
+
+  fn draw() {
+    clear(list)
+    if items.is_empty() {
+      append(list, el("div", "palette-empty", "Sin resultados."))
+      return nil
+    }
+    for (i, item) in items.enumerate() {
+      let row = append(list, el("div", "palette-row"))
+      toggle_class(row, "on", i == selected)
+      attr(row, "role", "option")
+      if item.tag != nil {
+        append(row, span(item.tag_class, item.tag))
+      } else {
+        let holder = append(row, el("span", "palette-icon"))
+        append(holder, icon(item.icon, 15))
+      }
+      append(row, span("label", item.label))
+      if item.hint != nil { append(row, span("palette-hint", item.hint)) }
+      on(row, "mousedown", || run(item))
+      on(row, "mouseenter", || {
+        if selected != i {
+          selected = i
+          draw()
+        }
+      })
+    }
+  }
+
+  fn refilter() {
+    let needle = value(input).trim().lower()
+    let requests = flatten(app.tree, [], []).map(|r| {
+      let m = r.node.method ?? "GET"
+      let is_lambda = r.node.type == "lambda"
+      {
+        label: r.node.name,
+        hint: r.trail,
+        tag: if is_lambda { "λ" } else { m },
+        tag_class: if is_lambda { "method m-lambda" } else { "method m-{m}" },
+        search: "{r.trail} {r.node.name} {m}",
+        rank: 2,
+        run: || open_request(r.node.id),
+      }
+    })
+    let everything = requests + actions.map(|a| {
+      { label: a[0], icon: a[1], run: a[2], search: a[0], hint: a[3], rank: 1 }
+    })
+    let scored = everything.map(|it| [score(it.search, needle), it]).filter(|p| p[0] > 0)
+    let ordered = if needle.is_empty() {
+      scored.sorted_by(|a, b| b[1].rank - a[1].rank)
+    } else {
+      scored.sorted_by(|a, b| b[0] - a[0])
+    }
+    items = ordered.take(40).map(|p| p[1])
+    selected = 0
+    draw()
+  }
+
+  on(input, "input", refilter)
+  on(overlay, "mousedown", |e| {
+    if e.target == overlay { close() }
+  })
+  on(input, "keydown", |e| {
+    if e.key == "Escape" { close() }
+    if e.key == "ArrowDown" && !items.is_empty() {
+      selected = (selected + 1) % items.len()
+      draw()
+    }
+    if e.key == "ArrowUp" && !items.is_empty() {
+      selected = (selected - 1 + items.len()) % items.len()
+      draw()
+    }
+    if e.key == "Enter" && !items.is_empty() { run(items[selected]) }
+  })
+  refilter()
+  focus(input)
+}

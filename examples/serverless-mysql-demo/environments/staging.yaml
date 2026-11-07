@@ -1,0 +1,9 @@
+name: staging
+# Pide confirmación antes de cualquier request que no sea GET.
+protected: true
+extends: dev
+variables:
+  stage: staging
+aws:
+  profile: mi-perfil
+  region: us-east-1

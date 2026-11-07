@@ -1,0 +1,9 @@
+name: Listar pedidos
+method: GET
+url: "{{baseUrl}}/orders?limit=10&status=paid"
+observe:
+  logs: true
+  lambda: orders-service-{{stage}}-listOrders
+disabled:
+  query:
+    page: "2"

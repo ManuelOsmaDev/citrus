@@ -1,0 +1,24 @@
+name: Crear pedido
+method: POST
+url: "{{baseUrl}}/orders"
+headers:
+  Authorization: "Bearer {{token}}"
+body:
+  json:
+    productId: 42
+    quantity: 2
+# observe, assert y capture todavía no se ejecutan (fases 3 a 5), pero Citrus los conserva al guardar.
+observe:
+  logs: true
+  lambda: orders-service-{{stage}}-createOrder
+  db:
+    connection: main
+    tables: [orders, order_items]
+assert:
+  - status == 201
+  - body.id exists
+  - db.orders.inserted == 1
+  - logs.errors == 0
+  - lambda.duration < 500
+capture:
+  lastOrderId: body.id

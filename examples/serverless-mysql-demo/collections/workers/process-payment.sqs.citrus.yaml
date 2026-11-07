@@ -1,0 +1,13 @@
+name: Procesar pago
+type: lambda
+function: payments-{{stage}}-processPayment
+mode: local
+handler: src/handlers.processPayment
+event:
+  template: sqs
+  records:
+    - body:
+        orderId: "{{lastOrderId}}"
+        amount: 120000
+assert:
+  - result.batchItemFailures.length == 0

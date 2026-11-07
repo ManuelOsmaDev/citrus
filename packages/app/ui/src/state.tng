@@ -1,0 +1,383 @@
+// Estado de la app y las acciones que lo cambian. Las vistas se registran en app.ui.
+import { toast } from "./widgets.tng"
+
+export let app = {
+  ready: false,
+  workspace: nil,
+  recents: [],
+  has_demo: false,
+  tree: [],
+  envs: [],
+  env: nil,
+  env_info: nil,
+  tabs: [],
+  active: nil,
+  side: "collections",
+  filter: "",
+  collapsed: {},
+  history: [],
+  theme: load("citrus.theme") ?? "dark",
+  ui: {},
+}
+
+export fn api(method, args, ok, fail = nil) {
+  ipc_call(method, args, ok, |e| {
+    if fail != nil { fail(e) } else { toast(e.message, "error") }
+  })
+}
+
+export fn active_tab() {
+  app.tabs.find(|t| t.id == app.active)
+}
+
+fn filled(rows) {
+  rows.filter(|r| !r.key.is_empty() || !r.value.is_empty())
+}
+
+// Texto comparable de una request: sirve para saber si hay cambios sin guardar.
+export fn snapshot(m) {
+  if m.type == "lambda" {
+    return to_json({
+      name: m.name,
+      fn_name: m["function"],
+      mode: m.mode,
+      handler: m.handler,
+      cwd: m.cwd,
+      event: m.eventText,
+      observe: m.observe,
+      tests: m.assert,
+      capture: filled(m.capture),
+    })
+  }
+  to_json({
+    observe: m.observe,
+    tests: m.assert,
+    capture: filled(m.capture),
+    name: m.name,
+    method: m.method,
+    url: m.url,
+    headers: filled(m.headers),
+    disabledQuery: filled(m.disabledQuery ?? []),
+    body: { mode: m.body.mode, text: m.body.text, file: m.body.file, rows: filled(m.body.rows ?? []) },
+    auth: m.auth,
+  })
+}
+
+export fn touch(tab) {
+  tab.dirty = snapshot(tab.model) != tab.saved
+  app.ui.tabs()
+}
+
+fn workspace_key(name) {
+  "citrus.{name}:{app.workspace.root}"
+}
+
+fn remember_tabs() {
+  if app.workspace != nil {
+    save(workspace_key("tabs"), to_json(app.tabs.map(|t| t.id)))
+    save(workspace_key("active"), app.active ?? "")
+  }
+}
+
+export fn activate_tab(id) {
+  app.active = id
+  remember_tabs()
+  app.ui.tabs()
+  app.ui.sidebar()
+  app.ui.workspace()
+}
+
+fn add_tab(id, r) {
+  let m = r.model
+  let tab = {
+    id: id,
+    model: m,
+    raw: r.raw,
+    saved: snapshot(m),
+    dirty: false,
+    sub: if m.type == "lambda" { "event" } else if m.body.mode != "none" { "body" } else { "params" },
+    prev: nil,
+    params: nil,
+    response: nil,
+    res_tab: "body",
+    sending: false,
+    run_id: nil,
+    error: nil,
+  }
+  app.tabs.push(tab)
+  tab
+}
+
+export fn open_request(id) {
+  if app.tabs.any(|t| t.id == id) {
+    activate_tab(id)
+    return nil
+  }
+  api("readRequest", { id: id }, |r| {
+    add_tab(id, r)
+    activate_tab(id)
+  })
+}
+
+fn drop_tab(id) {
+  let at = app.tabs.position(|t| t.id == id)
+  if at == nil { return nil }
+  app.tabs.remove(at)
+  if app.active == id {
+    let next = app.tabs[at] ?? app.tabs.last()
+    app.active = if next != nil { next.id } else { nil }
+  }
+  remember_tabs()
+  app.ui.tabs()
+  app.ui.sidebar()
+  app.ui.workspace()
+}
+
+export fn close_tab(id) {
+  let tab = app.tabs.find(|t| t.id == id)
+  if tab == nil { return nil }
+  if tab.dirty {
+    app.ui.confirm("Cambios sin guardar", "«{tab.model.name}» tiene cambios sin guardar. Si la cierras, se pierden.", "Cerrar sin guardar", || drop_tab(id))
+  } else {
+    drop_tab(id)
+  }
+}
+
+export fn refresh_tree() {
+  if app.workspace == nil { return nil }
+  api("tree", nil, |tree| {
+    app.tree = tree
+    app.ui.sidebar()
+  })
+}
+
+export fn refresh_history() {
+  if app.workspace == nil { return nil }
+  api("history", nil, |h| {
+    app.history = h
+    if app.side == "history" { app.ui.sidebar() }
+  })
+}
+
+export fn refresh_env(after_done = nil) {
+  if app.env == nil {
+    app.env_info = nil
+    app.ui.topbar()
+    app.ui.env_changed()
+    if after_done != nil { after_done() }
+    return nil
+  }
+  api("envDescribe", { id: app.env }, |info| {
+    app.env_info = info
+    app.ui.topbar()
+    app.ui.env_changed()
+    if after_done != nil { after_done() }
+  }, |e| {
+    app.env_info = nil
+    toast(e.message, "error")
+    app.ui.topbar()
+    app.ui.env_changed()
+  })
+}
+
+export fn refresh_envs(after_done = nil) {
+  api("envs", nil, |envs| {
+    app.envs = envs
+    if app.env != nil && !envs.any(|e| e.id == app.env) { app.env = nil }
+    refresh_env(after_done)
+  })
+}
+
+export fn select_env(id) {
+  app.env = if id.is_empty() { nil } else { id }
+  save(workspace_key("env"), app.env ?? "")
+  refresh_env()
+}
+
+// Aplica lo que devuelve main al abrir un workspace y restaura sus pestañas.
+export fn enter_workspace(snap) {
+  app.workspace = snap.workspace
+  app.tree = snap.tree
+  app.envs = snap.envs
+  app.tabs = []
+  app.active = nil
+  app.history = []
+
+  let stored = load(workspace_key("env"))
+  let wanted = if stored != nil && !stored.is_empty() { stored } else { snap.workspace.defaultEnvironment }
+  let known = snap.envs.any(|e| e.id == wanted)
+  app.env = if known { wanted } else if !snap.envs.is_empty() { snap.envs[0].id } else { nil }
+
+  app.ui.shell()
+  refresh_env()
+  refresh_history()
+
+  let ids = from_json(load(workspace_key("tabs")) ?? "[]")
+  let focus_id = load(workspace_key("active"))
+  var pending = ids.len()
+  if pending == 0 { return nil }
+  let tick = || {
+    pending -= 1
+    if pending == 0 {
+      let keep = app.tabs.any(|t| t.id == focus_id)
+      if keep { activate_tab(focus_id) } else if !app.tabs.is_empty() { activate_tab(app.tabs[0].id) }
+    }
+  }
+  for id in ids {
+    // Un archivo borrado o movido desde fuera no impide abrir el resto.
+    api("readRequest", { id: id }, |r| {
+      add_tab(id, r)
+      tick()
+    }, |e| tick())
+  }
+}
+
+export fn leave_workspace() {
+  api("closeWorkspace", nil, |r| {
+    app.workspace = nil
+    app.tabs = []
+    app.active = nil
+    app.recents = r.recents
+    app.ui.shell()
+  })
+}
+
+export fn any_dirty() {
+  app.tabs.any(|t| t.dirty)
+}
+
+export fn save_active(decision = nil) {
+  let tab = active_tab()
+  if tab == nil { return nil }
+  api("saveRequest", { id: tab.id, model: tab.model, env: app.env, decision: decision }, |r| {
+    if r.blocked == true {
+      app.ui.secret_guard(r.findings, save_active)
+      return nil
+    }
+    if r.model != nil {
+      tab.model = r.model
+      tab.params = nil
+      app.ui.workspace()
+      refresh_env()
+    }
+    tab.raw = r.raw
+    tab.saved = snapshot(tab.model)
+    tab.dirty = false
+    app.ui.tabs()
+    if app.active == tab.id && tab.sub == "yaml" { app.ui.workspace() }
+    refresh_tree()
+    toast("Guardado", "ok")
+  })
+}
+
+export fn send_active() {
+  let tab = active_tab()
+  if tab == nil || tab.sending { return nil }
+  let run_id = "run-{now()}"
+  tab.sending = true
+  tab.error = nil
+  tab.run_id = run_id
+  app.ui.send_state()
+  app.ui.response()
+  api("send", { id: tab.id, model: tab.model, env: app.env, runId: run_id }, |res| {
+    tab.sending = false
+    if tab.response != nil { tab.prev = tab.response.body.text }
+    tab.response = res
+    tab.error = nil
+    if !res.captured.is_empty() { refresh_env() }
+    start_logs(tab, res)
+    if app.active == tab.id {
+      app.ui.send_state()
+      app.ui.response()
+    }
+    refresh_history()
+  }, |e| {
+    tab.sending = false
+    tab.response = nil
+    tab.error = e
+    if app.active == tab.id {
+      app.ui.send_state()
+      app.ui.response()
+    }
+    refresh_history()
+  })
+}
+
+// ---------- Logs de CloudWatch ----------
+
+let LOGS_TIMEOUT_MS = 90000
+
+fn redraw_response(tab) {
+  if app.active == tab.id { app.ui.response() }
+}
+
+fn apply_logs(res, out) {
+  res.logState = out.state
+  res.logRequestId = out.requestId
+  res.logApproximate = out.approximate == true
+  res.logCandidates = out.candidates ?? []
+  if !out.logs.is_empty() { res.logs = out.logs }
+  if out.state == "ready" {
+    res.lambda = out.lambda
+    res.traceUrl = out.traceUrl
+    res.tests = out.tests
+    res.testSummary = out.testSummary
+  }
+}
+
+fn poll_logs(tab, res, started, attempt, pick) {
+  if tab.response != res { return nil }
+  let args = { runId: res.runId, pick: pick }
+  api("fetchLogs", args, |out| {
+    if tab.response != res { return nil }
+    let before = res.logs.len()
+    let was = res.logState
+    apply_logs(res, out)
+    if out.state == "waiting" {
+      if now() - started > LOGS_TIMEOUT_MS {
+        res.logState = "timeout"
+        redraw_response(tab)
+        return nil
+      }
+      if was != out.state || res.logs.len() != before {
+        if tab.res_tab == "logs" || was != out.state { redraw_response(tab) }
+      }
+      after(min(1500 + attempt * 500, 5000), || poll_logs(tab, res, started, attempt + 1, nil))
+    } else {
+      redraw_response(tab)
+    }
+  }, |e| {
+    if tab.response != res { return nil }
+    res.logState = "error"
+    res.logError = e
+    redraw_response(tab)
+  })
+}
+
+export fn start_logs(tab, res, pick = nil) {
+  if res.observation == nil || res.observation.error != nil { return nil }
+  if res.logs == nil { res.logs = [] }
+  res.logState = "waiting"
+  poll_logs(tab, res, now(), 0, pick)
+}
+
+export fn refresh_db(tab, res) {
+  api("dbRefresh", { runId: res.runId }, |out| {
+    res.db = out.db
+    res.tests = out.tests
+    res.testSummary = out.testSummary
+    if app.active == tab.id { app.ui.response() }
+  })
+}
+
+export fn cancel_active() {
+  let tab = active_tab()
+  if tab != nil && tab.sending { api("cancel", { runId: tab.run_id }, nil) }
+}
+
+export fn set_theme(theme) {
+  app.theme = theme
+  save("citrus.theme", theme)
+  apply_theme(theme)
+  ipc_call("setTheme", { theme: theme }, nil, nil)
+}

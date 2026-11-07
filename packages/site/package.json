@@ -1,0 +1,17 @@
+{
+  "name": "@citrus/site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Página de Citrus, hecha con Tangerine.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "npm run build && tangerine serve dist -p 4173"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.1.0",
+    "@fontsource-variable/geist-mono": "^5.1.0",
+    "tangerine-lang": "3.1.0"
+  }
+}

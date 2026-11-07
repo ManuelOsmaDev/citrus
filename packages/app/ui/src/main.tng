@@ -1,0 +1,330 @@
+// Citrus: arma la ventana y conecta las vistas.
+import { active_tab, any_dirty, api, app, close_tab, activate_tab, enter_workspace, leave_workspace, refresh_env, refresh_tree, save_active, select_env, send_active, set_theme } from "./state.tng"
+import { ask_text, confirm_box, open_env_editor, open_import, open_snippet, run_folder_view, secret_guard } from "./modals.tng"
+import { open_palette } from "./palette.tng"
+import { draw_sidebar } from "./sidebar.tng"
+import { draw_request, env_changed, update_send_state } from "./request.tng"
+import { draw_response } from "./response.tng"
+import { btn, icon_btn, span, toast } from "./widgets.tng"
+
+let root = query("#app")
+var topbar_host = nil
+var statusbar_host = nil
+var sidebar_host = nil
+var tabs_host = nil
+var workspace_host = nil
+var request_host = nil
+var response_host = nil
+app.layout = load("citrus.layout") ?? "columns"
+
+// ---------- Paleta ----------
+
+fn new_request_action() {
+  ask_text("Nueva request", "Nombre", "Crear pedido", "Crear", |name| {
+    api("createRequest", { folder: "", name: name }, |r| {
+      refresh_tree()
+      app.ui.open(r.id)
+    })
+  })
+}
+
+fn palette() {
+  if app.workspace == nil { return nil }
+  let base = [
+    ["Nueva request", "plus", new_request_action, nil],
+    ["Importar cURL, Postman o serverless.yml", "upload", open_import, nil],
+    ["Editar entornos y secretos", "settings", || open_env_editor(), nil],
+    ["Correr toda la colección", "play", || run_folder_view("", "toda la colección"), nil],
+    ["Guardar", "file", save_active, "Ctrl+S"],
+    ["Cambiar distribución de paneles", "columns", toggle_layout, nil],
+    ["Cambiar tema", "sun", toggle_theme, nil],
+  ]
+  let env_actions = app.envs.filter(|e| e.id != app.env).map(|e| ["Cambiar al entorno {e.name}", "layers", || select_env(e.id), nil])
+  let tab_actions = if active_tab() != nil { [["Copiar como código", "code", || open_snippet(active_tab()), nil]] } else { [] }
+  open_palette(base + tab_actions + env_actions)
+}
+
+fn toggle_theme() {
+  set_theme(if app.theme == "dark" { "light" } else { "dark" })
+  draw_statusbar()
+}
+
+fn toggle_layout() {
+  app.layout = if app.layout == "columns" { "rows" } else { "columns" }
+  save("citrus.layout", app.layout)
+  request_host = nil
+  draw_workspace()
+  draw_statusbar()
+}
+
+// ---------- Barra superior y barra de estado ----------
+
+fn guard_dirty(f) {
+  if any_dirty() {
+    confirm_box("Cambios sin guardar", "Hay requests con cambios sin guardar. Si sigues, se pierden.", "Seguir sin guardar", f)
+  } else {
+    f()
+  }
+}
+
+fn draw_topbar() {
+  if topbar_host == nil { return nil }
+  clear(topbar_host)
+  let left = append(topbar_host, el("div", "tb-left"))
+  let brand = append(left, el("div", "brand"))
+  append(brand, logo(21))
+  add_text(brand, "Citrus")
+  if app.workspace != nil {
+    append(left, el("div", "sep"))
+    let crumb = append(left, el("button", "crumb"))
+    attr(crumb, "title", "{app.workspace.root} — cambiar de workspace")
+    append(crumb, icon("folder", 14))
+    append(crumb, span(nil, app.workspace.name))
+    on(crumb, "click", || guard_dirty(leave_workspace))
+
+    let trigger = append(topbar_host, el("button", "palette-trigger"))
+    attr(trigger, "aria-label", "Buscar o ejecutar una acción")
+    append(trigger, icon("search", 14))
+    append(trigger, span("grow", "Buscar o ejecutar una acción"))
+    append(trigger, span("kbd", "Ctrl K"))
+    on(trigger, "click", palette)
+
+    let right = append(topbar_host, el("div", "tb-right"))
+    let is_protected = app.env_info != nil && app.env_info.effectiveProtected
+    let picker = append(right, el("div", "env-picker no-drag"))
+    toggle_class(picker, "protected", is_protected)
+    toggle_class(picker, "none", app.env == nil)
+    append(picker, el("span", "env-dot"))
+    let sel = append(picker, el("select"))
+    attr(sel, "aria-label", "Entorno activo")
+    attr(sel, "data-env-select", "1")
+    for o in [["", "Sin entorno"]] + app.envs.map(|e| [e.id, e.name]) {
+      let opt = append(sel, el("option", nil, o[1]))
+      attr(opt, "value", o[0])
+    }
+    set_value(sel, app.env ?? "")
+    on(sel, "change", || select_env(value(sel)))
+    if is_protected {
+      let mark = append(picker, icon("lock", 13))
+      attr(mark, "class", "env-lock")
+    }
+    append(right, icon_btn("settings", "Editar entornos y secretos", || open_env_editor()))
+    append(right, btn("ghost", "Importar", open_import, "upload"))
+  }
+}
+
+fn draw_statusbar() {
+  if statusbar_host == nil { return nil }
+  clear(statusbar_host)
+  if app.workspace != nil && app.env_info != nil {
+    let info = app.env_info
+    let missing = info.secrets.filter(|s| !s.isSet).len()
+    let vars_item = append(statusbar_host, el("span", "status-item"))
+    add_text(vars_item, "{info.resolved.len()} variables · {info.secrets.len()} secretos")
+    if missing > 0 {
+      let warn = append(statusbar_host, span("status-item s-4", "{missing} sin valor"))
+      attr(warn, "title", "Defínelos en Editar entornos")
+    }
+    if !info.captured.is_empty() {
+      let item = append(statusbar_host, span("status-item", "{info.captured.len()} capturadas"))
+      attr(item, "title", info.captured.join(", "))
+    }
+  }
+  append(statusbar_host, el("div", "grow"))
+  if app.workspace != nil {
+    let lay = append(statusbar_host, el("button", "status-btn"))
+    attr(lay, "title", "Cambiar distribución de paneles")
+    append(lay, icon(if app.layout == "columns" { "columns" } else { "rows" }, 13))
+    add_text(lay, if app.layout == "columns" { "Lado a lado" } else { "Apilado" })
+    on(lay, "click", toggle_layout)
+  }
+  let theme_btn = append(statusbar_host, el("button", "status-btn"))
+  attr(theme_btn, "title", "Cambiar tema")
+  add_text(theme_btn, if app.theme == "dark" { "Tema oscuro" } else { "Tema claro" })
+  on(theme_btn, "click", toggle_theme)
+}
+
+// ---------- Pestañas ----------
+
+fn draw_tabs() {
+  if tabs_host == nil { return nil }
+  clear(tabs_host)
+  for tab in app.tabs {
+    let t = append(tabs_host, el("div", "tab"))
+    toggle_class(t, "on", tab.id == app.active)
+    let m = tab.model
+    if m.type == "lambda" {
+      append(t, span("method m-lambda", "λ"))
+    } else {
+      append(t, span("method m-{m.method}", if m.method == "DELETE" { "DEL" } else if m.method == "OPTIONS" { "OPT" } else { m.method }))
+    }
+    let label = append(t, span("label", m.name))
+    attr(label, "title", tab.id)
+    if tab.dirty {
+      let dot = append(t, el("span", "unsaved"))
+      attr(dot, "title", "Sin guardar")
+    }
+    append(t, icon_btn("close", "Cerrar pestaña", || close_tab(tab.id)))
+    on(t, "click", || {
+      if app.active != tab.id { activate_tab(tab.id) }
+    })
+  }
+}
+
+// ---------- Área de trabajo ----------
+
+fn draw_workspace() {
+  if workspace_host == nil { return nil }
+  if app.active == nil {
+    clear(workspace_host)
+    request_host = nil
+    response_host = nil
+    let lone = append(workspace_host, el("div", "lone res-empty"))
+    append(lone, logo(46))
+    append(lone, el("h3", nil, "Elige una request de la colección"))
+    append(lone, el("p", nil, "O trae tus endpoints desde un serverless.yml, un template de SAM, Postman o cURL."))
+    append(lone, btn("", "Importar", open_import, "upload"))
+    return nil
+  }
+  if request_host == nil {
+    clear(workspace_host)
+    let stacked = app.layout == "rows"
+    let split = append(workspace_host, el("div", "split"))
+    toggle_class(split, "stack", stacked)
+    request_host = append(split, el("div", "pane"))
+    attr(request_host, "data-pane", "request")
+    let handle = append(split, el("div", "resizer"))
+    if stacked {
+      drag_split(handle, split, "--split-y", "y", 22, 78)
+    } else {
+      drag_split(handle, split, "--split", "x", 28, 72)
+    }
+    response_host = append(split, el("div", "pane"))
+    attr(response_host, "data-pane", "response")
+  }
+  draw_request(request_host)
+  draw_response(response_host)
+}
+
+// ---------- Bienvenida ----------
+
+fn open_from(method, args = nil) {
+  api(method, args, |snap| {
+    if snap != nil { enter_workspace(snap) }
+  })
+}
+
+fn draw_welcome(host) {
+  let wrap = append(host, el("div", "welcome"))
+  let inner = append(wrap, el("div", "welcome-box"))
+  let intro = append(inner, el("div"))
+  append(intro, logo(46))
+  append(intro, el("h1", nil, "Lo que tu endpoint respondió, y lo que pasó adentro."))
+  append(intro, el("p", "lead", "Invoca Lambdas, lee sus logs y prueba tus APIs desde una sola pantalla. Tus colecciones son archivos YAML en Git, sin cuenta y sin nube."))
+  let actions = append(inner, el("div", "welcome-actions"))
+  append(actions, btn("primary", "Abrir workspace", || open_from("chooseWorkspace"), "folder"))
+  append(actions, btn("", "Crear workspace", || open_from("createWorkspace"), "folderPlus"))
+  if app.has_demo { append(actions, btn("ghost", "Probar la demo", || open_from("openDemo"), "bolt")) }
+  if !app.recents.is_empty() {
+    let list = append(inner, el("div"))
+    append(list, el("p", "recent-title", "Recientes"))
+    for r in app.recents {
+      let row = append(list, el("button", "recent"))
+      append(row, icon("folder", 15))
+      append(row, span(nil, r))
+      attr(row, "title", r)
+      on(row, "click", || open_from("openRecent", { root: r }))
+    }
+  }
+}
+
+// ---------- Ventana ----------
+
+fn draw_shell() {
+  clear(root)
+  topbar_host = append(root, el("header", "titlebar"))
+  sidebar_host = nil
+  tabs_host = nil
+  workspace_host = nil
+  request_host = nil
+  response_host = nil
+  statusbar_host = nil
+  if app.workspace == nil {
+    draw_topbar()
+    draw_welcome(root)
+    statusbar_host = append(root, el("footer", "statusbar"))
+    draw_statusbar()
+    return nil
+  }
+  let layout = append(root, el("div", "layout"))
+  sidebar_host = append(layout, el("aside", "sidebar"))
+  let handle = append(layout, el("div", "resizer"))
+  drag_split(handle, layout, "--side", "x", 14, 40)
+  let main_el = append(layout, el("main", "main"))
+  tabs_host = append(main_el, el("div", "tabs"))
+  workspace_host = append(main_el, el("div", "split-host"))
+  statusbar_host = append(root, el("footer", "statusbar"))
+  draw_topbar()
+  draw_statusbar()
+  draw_sidebar(sidebar_host)
+  draw_tabs()
+  draw_workspace()
+}
+
+app.ui.shell = draw_shell
+app.ui.topbar = || {
+  draw_topbar()
+  draw_statusbar()
+}
+app.ui.tabs = draw_tabs
+app.ui.sidebar = || {
+  if sidebar_host != nil { draw_sidebar(sidebar_host) }
+}
+app.ui.workspace = draw_workspace
+app.ui.response = || {
+  if response_host != nil { draw_response(response_host) }
+}
+app.ui.send_state = update_send_state
+app.ui.env_changed = env_changed
+app.ui.confirm = confirm_box
+app.ui.secret_guard = secret_guard
+app.ui.run_folder = run_folder_view
+
+on_keys(|k| {
+  if !k.ctrl { return false }
+  match k.key {
+    "Enter" => {
+      send_active()
+      true
+    },
+    "s" => {
+      save_active()
+      true
+    },
+    "k" => {
+      palette()
+      true
+    },
+    "w" => {
+      if app.active != nil { close_tab(app.active) }
+      true
+    },
+    _ => false,
+  }
+})
+
+on_window_focus(|| refresh_tree())
+
+apply_theme(app.theme)
+ipc_call("setTheme", { theme: app.theme }, nil, nil)
+draw_shell()
+
+api("boot", nil, |r| {
+  app.recents = r.recents
+  app.has_demo = r.hasDemo
+  if r.opened != nil {
+    enter_workspace(r.opened)
+  } else {
+    draw_shell()
+  }
+})

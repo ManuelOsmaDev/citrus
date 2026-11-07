@@ -1,0 +1,188 @@
+// Piezas de interfaz sin estado de la app.
+
+export fn box(cls, children = []) {
+  let e = el("div", cls)
+  for c in children {
+    if c != nil { append(e, c) }
+  }
+  e
+}
+
+export fn span(cls, t) {
+  el("span", cls, t)
+}
+
+export fn btn(cls, label, f, icon_name = nil) {
+  let b = el("button", "btn {cls}")
+  if icon_name != nil { append(b, icon(icon_name, 15)) }
+  if label != nil { add_text(b, label) }
+  on(b, "click", f)
+  b
+}
+
+export fn icon_btn(name, title, f, cls = "") {
+  let b = el("button", "icon-btn {cls}")
+  attr(b, "title", title)
+  attr(b, "aria-label", title)
+  append(b, icon(name, 15))
+  on_stop(b, "click", f)
+  b
+}
+
+export fn text_input(val, placeholder, f, cls = "input") {
+  let i = el("input", cls)
+  attr(i, "spellcheck", "false")
+  if placeholder != nil { attr(i, "placeholder", placeholder) }
+  set_value(i, val ?? "")
+  on(i, "input", || f(value(i)))
+  i
+}
+
+export fn select_el(cls, options, current, f) {
+  let s = el("select", cls)
+  for o in options {
+    let opt = append(s, el("option", nil, o[1]))
+    attr(opt, "value", o[0])
+  }
+  set_value(s, current ?? "")
+  on(s, "change", || f(value(s)))
+  s
+}
+
+export fn segmented(options, current, f) {
+  let wrap = el("div", "segmented")
+  for o in options {
+    let b = append(wrap, el("button", nil, o[1]))
+    toggle_class(b, "on", o[0] == current)
+    on(b, "click", || f(o[0]))
+  }
+  wrap
+}
+
+export fn field(label, control) {
+  let f = el("div", "field")
+  append(f, el("label", nil, label))
+  append(f, control)
+  f
+}
+
+// Tabla clave/valor. La última fila es un fantasma: se vuelve real al escribir en ella.
+export fn rows_table(rows, changed, opts = {}) {
+  let with_type = opts.files == true
+  let table = el("div", "kv")
+  let head = append(table, el("div", "kv-head"))
+  toggle_class(head, "with-type", with_type)
+  append(head, el("span"))
+  append(head, span(nil, opts.key_label ?? "Nombre"))
+  if with_type { append(head, span(nil, "Tipo")) }
+  append(head, span(nil, opts.value_label ?? "Valor"))
+
+  fn add_row(r, starts_ghost) {
+    var ghost = starts_ghost
+    let line = append(table, el("div", "kv-row"))
+    toggle_class(line, "with-type", with_type)
+    toggle_class(line, "ghost", ghost)
+    toggle_class(line, "off", r.enabled == false)
+
+    fn promote() {
+      if ghost {
+        ghost = false
+        toggle_class(line, "ghost", false)
+        rows.push(r)
+        add_row({ key: "", value: "", enabled: true, isFile: false }, true)
+      }
+    }
+
+    let check = append(line, el("input"))
+    attr(check, "type", "checkbox")
+    attr(check, "aria-label", "Activar fila")
+    set_checked(check, r.enabled != false)
+    if opts.toggle == false { set_style(check, "visibility", "hidden") }
+    on(check, "change", || {
+      r.enabled = checked(check)
+      toggle_class(line, "off", !r.enabled)
+      changed()
+    })
+
+    append(line, text_input(r.key, opts.key_placeholder ?? "Nombre", |v| {
+      r.key = v
+      promote()
+      changed()
+    }))
+    if with_type {
+      append(line, select_el("select", [["text", "Texto"], ["file", "Archivo"]], if r.isFile == true { "file" } else { "text" }, |v| {
+        r.isFile = v == "file"
+        promote()
+        changed()
+      }))
+    }
+    append(line, text_input(r.value, opts.value_placeholder ?? "Valor", |v| {
+      r.value = v
+      promote()
+      changed()
+    }))
+    append(line, icon_btn("trash", "Quitar fila", || {
+      let at = rows.position(|x| x == r)
+      if at != nil { rows.remove(at) }
+      remove(line)
+      changed()
+    }, "kv-del"))
+  }
+
+  for r in rows { add_row(r, false) }
+  add_row({ key: "", value: "", enabled: true, isFile: false }, true)
+  table
+}
+
+export fn toast(message, kind = "info") {
+  var host = query(".toasts")
+  if host == nil { host = append(query("body"), el("div", "toasts")) }
+  let t = append(host, el("div", "toast {kind}", message))
+  attr(t, "role", "status")
+  after(if kind == "error" { 7000 } else { 3500 }, || remove(t))
+}
+
+// Modal sobre un overlay; se cierra con Escape o con un clic fuera. Devuelve la función que lo cierra.
+export fn modal(title, body, footer = [], opts = {}) {
+  let overlay = append(query("body"), el("div", "overlay"))
+  let panel = append(overlay, el("div", "modal"))
+  attr(panel, "role", "dialog")
+  attr(panel, "aria-modal", "true")
+  attr(panel, "aria-label", title)
+  toggle_class(panel, "wide", opts.wide == true)
+
+  fn close() {
+    remove(overlay)
+    if opts.on_close != nil { opts.on_close() }
+  }
+
+  let head = append(panel, el("div", "modal-head"))
+  append(head, el("h2", nil, title))
+  append(head, icon_btn("close", "Cerrar", close))
+  append(panel, body)
+  toggle_class(body, "modal-body", true)
+  if !footer.is_empty() {
+    let foot = append(panel, el("div", "modal-foot"))
+    for f in footer { append(foot, f) }
+  }
+  on(overlay, "mousedown", |e| {
+    if e.target == overlay { close() }
+  })
+  on(overlay, "keydown", |e| {
+    if e.key == "Escape" { close() }
+  })
+  close
+}
+
+export fn fmt_ms(n) {
+  if n == nil { return "–" }
+  if n >= 1000 { return "{(n / 1000).round(2)} s" }
+  "{n.round(if n < 10 { 1 } else { 0 })} ms"
+}
+
+export fn fmt_bytes(n) {
+  if n == nil { return "–" }
+  if n < 1024 { return "{n} B" }
+  if n < 1048576 { return "{(n / 1024).round(1)} KB" }
+  "{(n / 1048576).round(1)} MB"
+}

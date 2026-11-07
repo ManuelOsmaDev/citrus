@@ -1,0 +1,15 @@
+name: Pagar pedido
+method: POST
+url: "{{baseUrl}}/orders/{{lastOrderId}}/pay"
+observe:
+  logs: true
+  lambda: orders-service-{{stage}}-payOrder
+  db:
+    connection: main
+    tables:
+      - name: orders
+        where: id = {{lastOrderId}}
+assert:
+  - status == 200
+  - db.orders.updated == 1
+  - db.orders.new[status=paid] exists

@@ -1,0 +1,668 @@
+// Panel izquierdo: edición de la request.
+import { api, active_tab, app, cancel_active, send_active, touch } from "./state.tng"
+import { open_env_editor, open_snippet } from "./modals.tng"
+import { box, btn, field, rows_table, select_el, segmented, span, text_input, toast } from "./widgets.tng"
+
+let METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+var editor = nil
+var send_button = nil
+var mirror = nil
+var resolved = nil
+var params_host = nil
+var url_input = nil
+
+// ---------- URL y query ----------
+
+fn split_url(url) {
+  let hash_at = url.index_of("#")
+  let no_hash = if hash_at != nil && hash_at >= 0 { url.slice(0, hash_at) } else { url }
+  let hash = if hash_at != nil && hash_at >= 0 { url.slice(hash_at) } else { "" }
+  let at = no_hash.index_of("?")
+  if at == nil || at < 0 { return [no_hash, "", hash] }
+  [no_hash.slice(0, at), no_hash.slice(at + 1), hash]
+}
+
+fn parse_query(text) {
+  if text.is_empty() { return [] }
+  text.split("&").filter(|p| !p.is_empty()).map(|p| {
+    let at = p.index_of("=")
+    if at == nil || at < 0 {
+      { key: url_dec(p), value: "", enabled: true }
+    } else {
+      { key: url_dec(p.slice(0, at)), value: url_dec(p.slice(at + 1)), enabled: true }
+    }
+  })
+}
+
+fn params_of(tab) {
+  if tab.params == nil {
+    let on_rows = parse_query(split_url(tab.model.url)[1])
+    tab.params = on_rows + tab.model.disabledQuery
+  }
+  tab.params
+}
+
+// La URL es la fuente de verdad de los params activos: así el YAML queda como se lee.
+fn params_changed(tab) {
+  let parts = split_url(tab.model.url)
+  let on_rows = tab.params.filter(|r| r.enabled != false && !r.key.is_empty())
+  let query_text = on_rows.map(|r| {
+    if r.value.is_empty() { url_enc(r.key) } else { "{url_enc(r.key)}={url_enc(r.value)}" }
+  }).join("&")
+  tab.model.url = parts[0] + if query_text.is_empty() { "" } else { "?" + query_text } + parts[2]
+  tab.model.disabledQuery = tab.params.filter(|r| r.enabled == false && !r.key.is_empty())
+  if url_input != nil { set_value(url_input, tab.model.url) }
+  draw_mirror(tab)
+  touch(tab)
+  draw_subtabs(tab)
+}
+
+fn url_changed(tab, text) {
+  tab.model.url = text
+  tab.params = parse_query(split_url(text)[1]) + tab.model.disabledQuery
+  draw_mirror(tab)
+  touch(tab)
+  if tab.sub == "params" && params_host != nil { draw_params(params_host, tab) }
+  draw_subtabs(tab)
+}
+
+// ---------- Vista previa de variables ----------
+
+fn draw_mirror(tab) {
+  if mirror == nil { return nil }
+  clear(mirror)
+  let info = app.env_info
+  let values = if info != nil { info.resolved } else { {} }
+  let secret_names = if info != nil { info.secrets.map(|s| s.name) } else { [] }
+  var preview = ""
+  var absent = []
+  for part in var_tokens(tab.model.url) {
+    if part.name == nil {
+      add_text(mirror, part.text)
+      preview += part.text
+    } else if secret_names.contains(part.name) {
+      append(mirror, span("var-secret", part.text))
+      preview += "••••••"
+    } else if values.has(part.name) {
+      append(mirror, span("var-ok", part.text))
+      preview += values[part.name]
+    } else {
+      append(mirror, span("var-missing", part.text))
+      absent.push(part.name)
+    }
+  }
+  if resolved == nil { return nil }
+  clear(resolved)
+  if !absent.is_empty() {
+    append(resolved, el("b", nil, "Falta en el entorno: {absent.unique().join(", ")}"))
+  } else if tab.model.url.contains('{{') {
+    add_text(resolved, preview)
+  }
+}
+
+export fn env_changed() {
+  let tab = active_tab()
+  if tab != nil && tab.model.type == "http" { draw_mirror(tab) }
+}
+
+export fn update_send_state() {
+  let tab = active_tab()
+  if tab == nil || send_button == nil { return nil }
+  clear(send_button)
+  toggle_class(send_button, "stop", tab.sending)
+  if tab.sending {
+    append(send_button, icon("stop", 14))
+    add_text(send_button, "Cancelar")
+  } else if tab.model.type == "lambda" {
+    add_text(send_button, "Invocar")
+    append(send_button, icon("play", 14))
+  } else {
+    add_text(send_button, "Enviar")
+    append(send_button, icon("send", 15))
+  }
+}
+
+// ---------- Pestañas internas ----------
+
+var subtabs_host = nil
+var sub_body = nil
+
+fn sub_count(tab, id) {
+  match id {
+    "params" => params_of(tab).filter(|r| r.enabled != false && !r.key.is_empty()).len(),
+    "headers" => tab.model.headers.filter(|r| r.enabled != false && !r.key.is_empty()).len(),
+    "tests" => tab.model.assert.filter(|l| !l.trim().is_empty()).len(),
+    _ => 0,
+  }
+}
+
+fn draw_subtabs(tab) {
+  if subtabs_host == nil { return nil }
+  clear(subtabs_host)
+  let is_lambda = tab.model.type == "lambda"
+  let items = if is_lambda {
+    [["event", "Evento"], ["config", "Configuración"], ["observe", "Observar"], ["tests", "Tests"], ["yaml", "YAML"]]
+  } else {
+    [["params", "Params"], ["headers", "Headers"], ["body", "Body"], ["auth", "Auth"], ["observe", "Observar"], ["tests", "Tests"], ["yaml", "YAML"]]
+  }
+  for item in items {
+    let b = append(subtabs_host, el("button", "subtab", item[1]))
+    toggle_class(b, "on", tab.sub == item[0])
+    attr(b, "data-subtab", item[0])
+    let n = if is_lambda && item[0] != "tests" { 0 } else { sub_count(tab, item[0]) }
+    if n > 0 { append(b, span("count", n)) }
+    if item[0] == "body" && tab.model.body.mode != "none" { append(b, el("span", "dot")) }
+    if item[0] == "auth" && tab.model.auth.type != "none" { append(b, el("span", "dot")) }
+    if item[0] == "observe" && tab.model.observe != nil && !tab.model.observe.is_empty() { append(b, el("span", "dot")) }
+    on(b, "click", || {
+      tab.sub = item[0]
+      draw_subtabs(tab)
+      draw_sub(tab)
+    })
+  }
+}
+
+fn drop_editor() {
+  editor_dispose(editor)
+  editor = nil
+}
+
+fn draw_params(host, tab) {
+  clear(host)
+  append(host, rows_table(params_of(tab), || params_changed(tab), { key_placeholder: "Agregar parámetro", value_placeholder: "Valor" }))
+}
+
+fn body_rows_table(tab, with_files) {
+  let opts = { key_placeholder: "Agregar campo", value_placeholder: if with_files { "Valor o ruta dentro del workspace" } else { "Valor" }, files: with_files }
+  rows_table(tab.model.body.rows, || {
+    touch(tab)
+    draw_subtabs(tab)
+  }, opts)
+}
+
+fn draw_body(host, tab) {
+  clear(host)
+  drop_editor()
+  let body = tab.model.body
+  let bar = append(host, el("div", "body-bar"))
+  if body.mode == "unsupported" {
+    let note = append(host, el("div", "padded"))
+    append(note, el("div", "notice", "Este tipo de body se conserva en el YAML, pero todavía no se edita ni se envía desde aquí."))
+    return nil
+  }
+  append(bar, segmented([
+    ["none", "Ninguno"], ["json", "JSON"], ["form", "Form"], ["multipart", "Multipart"], ["raw", "Raw"], ["binary", "Binario"],
+  ], body.mode, |mode| {
+    body.mode = mode
+    touch(tab)
+    draw_subtabs(tab)
+    draw_body(host, tab)
+  }))
+  if body.mode == "json" {
+    append(bar, box("grow"))
+    append(bar, btn("ghost", "Formatear", || {
+      api("formatJson", { text: body.text }, |pretty| {
+        body.text = pretty
+        editor_set(editor, pretty)
+        touch(tab)
+      })
+    }))
+  }
+  match body.mode {
+    "none" => {
+      append(host, el("div", "empty-sub", "Esta request no lleva body."))
+    },
+    "json" => draw_text_editor(host, tab, "json"),
+    "raw" => draw_text_editor(host, tab, "plaintext"),
+    "form" => { append(host, body_rows_table(tab, false)) },
+    "multipart" => { append(host, body_rows_table(tab, true)) },
+    "binary" => {
+      let wrap = append(host, el("div", "padded"))
+      append(wrap, field("Archivo, con ruta relativa al workspace", text_input(body.file, "assets/foto.png", |v| {
+        body.file = v
+        touch(tab)
+      })))
+      append(wrap, el("div", "hint", "Por seguridad, Citrus solo envía archivos que estén dentro del workspace."))
+    },
+    _ => nil,
+  }
+}
+
+fn draw_text_editor(host, tab, language) {
+  let box_el = append(host, el("div", "editor"))
+  editor = editor_create(box_el, { value: tab.model.body.text, language: language }, |text| {
+    tab.model.body.text = text
+    touch(tab)
+  })
+}
+
+fn draw_auth(host, tab) {
+  clear(host)
+  let auth = tab.model.auth
+  let wrap = append(host, el("div", "padded"))
+  if auth.type == "unsupported" {
+    append(wrap, el("div", "notice", "La autenticación «{auth.name}» se conserva en el YAML, pero todavía no está soportada. Citrus no enviará la request para no mandarla sin credenciales."))
+    return nil
+  }
+  append(wrap, field("Tipo", select_el("input", [
+    ["none", "Sin autenticación"], ["bearer", "Bearer token"], ["basic", "Basic"], ["apikey", "API Key"],
+  ], auth.type, |t| {
+    auth.type = t
+    if t == "bearer" { auth.token = auth.token ?? "" }
+    if t == "basic" {
+      auth.username = auth.username ?? ""
+      auth.password = auth.password ?? ""
+    }
+    if t == "apikey" {
+      auth.key = auth.key ?? "X-Api-Key"
+      auth.value = auth.value ?? ""
+      auth["in"] = auth["in"] ?? "header"
+    }
+    touch(tab)
+    draw_subtabs(tab)
+    draw_auth(host, tab)
+  })))
+  fn edit(name) {
+    |v| {
+      auth[name] = v
+      touch(tab)
+    }
+  }
+  if auth.type == "bearer" {
+    append(wrap, field("Token", text_input(auth.token, '{{token}}', edit("token"))))
+  }
+  if auth.type == "basic" {
+    append(wrap, field("Usuario", text_input(auth.username, "ana", edit("username"))))
+    append(wrap, field("Contraseña", text_input(auth.password, '{{password}}', edit("password"))))
+  }
+  if auth.type == "apikey" {
+    append(wrap, field("Nombre", text_input(auth.key, "X-Api-Key", edit("key"))))
+    append(wrap, field("Valor", text_input(auth.value, '{{apiKey}}', edit("value"))))
+    append(wrap, field("Se envía en", select_el("input", [["header", "Header"], ["query", "Query string"]], auth["in"], |v| {
+      auth["in"] = v
+      touch(tab)
+    })))
+  }
+  if auth.type != "none" {
+    let hint = append(wrap, el("div", "hint"))
+    add_text(hint, "Usa una variable como ")
+    append(hint, el("code", nil, '{{token}}'))
+    add_text(hint, " y guarda el valor como secreto: lo que escribas aquí va al YAML, y el YAML va a Git. ")
+    let link = append(hint, el("a", nil, "Abrir entornos"))
+    set_style(link, "color", "var(--accent)")
+    set_style(link, "cursor", "pointer")
+    on(link, "click", || open_env_editor())
+  }
+}
+
+fn draw_yaml(host, tab) {
+  clear(host)
+  drop_editor()
+  let box_el = append(host, el("div", "editor"))
+  editor = editor_create(box_el, { value: tab.raw, language: "yaml", readOnly: true, wrap: false }, nil)
+}
+
+fn draw_sub(tab) {
+  if sub_body == nil { return nil }
+  drop_editor()
+  clear(sub_body)
+  params_host = nil
+  match tab.sub {
+    "params" => {
+      params_host = sub_body
+      draw_params(sub_body, tab)
+    },
+    "headers" => {
+      append(sub_body, rows_table(tab.model.headers, || {
+        touch(tab)
+        draw_subtabs(tab)
+      }, { key_placeholder: "Agregar header", value_placeholder: "Valor" }))
+    },
+    "body" => draw_body(sub_body, tab),
+    "auth" => draw_auth(sub_body, tab),
+    "yaml" => draw_yaml(sub_body, tab),
+    "tests" => draw_tests(sub_body, tab),
+    "observe" => draw_observe(sub_body, tab),
+    "event" => draw_event(sub_body, tab),
+    "config" => draw_config(sub_body, tab),
+    _ => nil,
+  }
+}
+
+// ---------- Tests y capturas ----------
+
+fn suggest_tests(res) {
+  let lines = []
+  if res.kind == "lambda" {
+    lines.push("lambda.error not exists")
+    lines.push("lambda.duration < {max(100, (res.lambda.duration * 3).ceil())}")
+    lines.push("logs.errors == 0")
+  } else {
+    lines.push("status == {res.status}")
+    lines.push("time < {max(200, (res.timings.total * 3).ceil())}")
+  }
+  let root_name = if res.kind == "lambda" { "result" } else { "body" }
+  var parsed = nil
+  do {
+    parsed = from_json(res.body.raw)
+  } catch e {
+    parsed = nil
+  }
+  if type_of(parsed) == "Map" {
+    for k in parsed.keys().take(8) { lines.push("{root_name}.{k} exists") }
+  }
+  lines
+}
+
+fn draw_tests(host, tab) {
+  let m = tab.model
+  let wrap = append(host, el("div", "padded"))
+  let head = append(wrap, el("div", "row-between"))
+  append(head, el("div", "field-title", "Assertions, una por línea"))
+  let area = el("textarea", "input mono")
+  attr(area, "spellcheck", "false")
+  attr(area, "aria-label", "Assertions")
+  attr(area, "data-tests-input", "1")
+  attr(area, "placeholder", 'status == 201' + "\n" + 'body.id exists' + "\n" + 'time < 500')
+  set_value(area, m.assert.join("\n"))
+  on(area, "input", || {
+    m.assert = value(area).split("\n")
+    touch(tab)
+    draw_subtabs(tab)
+  })
+  let generate = append(head, btn("small", "Generar desde la respuesta", || {
+    if tab.response == nil {
+      toast("Envía la request primero: los tests salen de su respuesta.", "error")
+      return nil
+    }
+    let existing = m.assert.filter(|l| !l.trim().is_empty())
+    let fresh = suggest_tests(tab.response).filter(|l| !existing.contains(l))
+    m.assert = existing + fresh
+    set_value(area, m.assert.join("\n"))
+    touch(tab)
+    draw_subtabs(tab)
+  }, "bolt"))
+  attr(generate, "data-generate-tests", "1")
+  append(wrap, area)
+  let hint = append(wrap, el("div", "hint"))
+  add_text(hint, "Operadores: ")
+  append(hint, el("code", nil, "== != < <= > >= contains exists"))
+  add_text(hint, ". Rutas: ")
+  append(hint, el("code", nil, "status, time, headers.x, body.a[0].b, result.x, lambda.duration, logs.errors"))
+  add_text(hint, ".")
+  append(host, el("div", "section-title", "Capturas"))
+  let note = append(host, el("div", "line hint", "Guardan un valor de la respuesta como variable para las siguientes requests. Solo viven en memoria."))
+  set_style(note, "font-family", "inherit")
+  append(host, rows_table(m.capture, || touch(tab), { key_label: "Variable", value_label: "Ruta", key_placeholder: "Agregar captura", value_placeholder: "body.id", toggle: false }))
+}
+
+// ---------- Observar ----------
+
+fn draw_observe(host, tab) {
+  let m = tab.model
+  fn spec() {
+    if m.observe == nil { m.observe = {} }
+    m.observe
+  }
+  // Una clave vacía se quita, y si no queda nada se borra el bloque del YAML.
+  fn set_key(name, val) {
+    let s = spec()
+    if val.is_empty() { s.remove(name) } else { s[name] = val }
+    if s.is_empty() { m.observe = nil }
+    touch(tab)
+    draw_subtabs(tab)
+  }
+  let wrap = append(host, el("div", "padded"))
+  if m.type == "http" { draw_observe_logs(wrap, tab, spec, set_key) }
+  draw_observe_db(wrap, tab, spec)
+}
+
+fn draw_observe_db(wrap, tab, spec) {
+  let m = tab.model
+  append(wrap, el("div", "field-title", "Base de datos"))
+  let current = if m.observe != nil { m.observe.db } else { nil }
+  let names = if app.env_info != nil { app.env_info.dbNames } else { [] }
+  let chosen = if current != nil { current.connection ?? "" } else { "" }
+  let known = if chosen.is_empty() || names.contains(chosen) { names } else { names + [chosen] }
+  let details = el("div", "padded-none")
+
+  fn draw_details() {
+    clear(details)
+    let db = if m.observe != nil { m.observe.db } else { nil }
+    if db == nil { return nil }
+    append(details, field("Modo", select_el("input", [
+      ["", "El del entorno"], ["snapshot", "Snapshot: foto antes y después"], ["binlog", "Binlog: lee cada escritura"],
+    ], db.mode ?? "", |v| {
+      if v.is_empty() { db.remove("mode") } else { db.mode = v }
+      touch(tab)
+    })))
+    let rows = (db.tables ?? []).map(|t| {
+      if type_of(t) == "String" { { key: t, value: "", enabled: true } } else { { key: t.name, value: t.where ?? "", enabled: true } }
+    })
+    append(details, rows_table(rows, || {
+      let tables = rows.filter(|r| !r.key.trim().is_empty()).map(|r| {
+        if r.value.trim().is_empty() { r.key.trim() } else { { name: r.key.trim(), where: r.value.trim() } }
+      })
+      if tables.is_empty() { db.remove("tables") } else { db.tables = tables }
+      touch(tab)
+    }, { key_label: "Tabla", value_label: "WHERE, opcional", key_placeholder: "Agregar tabla", value_placeholder: "Opcional", toggle: false }))
+    let hint = append(details, el("div", "hint"))
+    add_text(hint, "Sin tablas, Citrus compara todas las chicas de la base. Snapshot solo ejecuta SELECT, en una transacción de solo lectura.")
+  }
+
+  let picker = select_el("input", [["", "No observar"]] + known.map(|n| [n, n]), chosen, |v| {
+    if v.is_empty() {
+      if m.observe != nil {
+        m.observe.remove("db")
+        if m.observe.is_empty() { m.observe = nil }
+      }
+    } else {
+      let s = spec()
+      if s.db == nil { s.db = {} }
+      s.db.connection = v
+    }
+    touch(tab)
+    draw_subtabs(tab)
+    draw_details()
+  })
+  attr(picker, "data-observe-db", "1")
+  append(wrap, field("Conexión", picker))
+  if names.is_empty() {
+    let note = append(wrap, el("div", "hint"))
+    add_text(note, "El entorno activo no tiene conexiones. ")
+    let link = append(note, el("a", "link", "Agregar una"))
+    on(link, "click", || open_env_editor())
+  }
+  append(wrap, details)
+  draw_details()
+}
+
+fn draw_observe_logs(wrap, tab, spec, set_key) {
+  let m = tab.model
+  append(wrap, el("div", "field-title", "Logs"))
+  let line = append(wrap, el("label", "switch-row"))
+  let check = append(line, el("input"))
+  attr(check, "type", "checkbox")
+  attr(check, "data-observe-logs", "1")
+  set_checked(check, m.observe != nil && m.observe.logs == true)
+  on(check, "change", || {
+    let s = spec()
+    if checked(check) { s.logs = true } else { s.remove("logs") }
+    if s.is_empty() { m.observe = nil }
+    touch(tab)
+    draw_subtabs(tab)
+  })
+  let copy_box = append(line, el("div", nil, "Traer los logs de CloudWatch"))
+  append(copy_box, el("small", nil, "Después de cada envío busca la invocación y muestra sus logs, duración, memoria y cold start."))
+  let current = m.observe ?? {}
+  let fn_input = text_input(current.lambda ?? "", 'orders-service-{{stage}}-createOrder', |v| set_key("lambda", v))
+  attr(fn_input, "data-observe-lambda", "1")
+  append(wrap, field("Función Lambda", fn_input))
+  append(wrap, field("Grupo de logs, si no es el de la función", text_input(current.logGroup ?? "", "/aws/lambda/mi-funcion", |v| set_key("logGroup", v))))
+  let hint = append(wrap, el("div", "hint"))
+  add_text(hint, "Usa el perfil y la región del bloque ")
+  append(hint, el("code", nil, "aws"))
+  add_text(hint, " del entorno, o la cadena estándar de credenciales. Tu usuario necesita ")
+  append(hint, el("code", nil, "logs:FilterLogEvents"))
+  add_text(hint, ".")
+}
+
+// ---------- Lambda ----------
+
+fn draw_event(host, tab) {
+  clear(host)
+  drop_editor()
+  let m = tab.model
+  let bar = append(host, el("div", "body-bar"))
+  append(bar, el("span", "hint", "Plantilla"))
+  let picker = append(bar, el("select", "select"))
+  set_style(picker, "width", "230px")
+  attr(picker, "aria-label", "Plantilla de evento")
+  attr(picker, "data-template", "1")
+  append(picker, el("option", nil, "Elegir…"))
+  api("eventTemplates", nil, |templates| {
+    for t in templates {
+      let opt = append(picker, el("option", nil, t.label))
+      attr(opt, "value", t.id)
+    }
+    on(picker, "change", || {
+      let chosen = templates.find(|t| t.id == value(picker))
+      if chosen != nil {
+        m.eventText = to_json(chosen.example, 2)
+        editor_set(editor, m.eventText)
+        touch(tab)
+      }
+    })
+  })
+  append(bar, box("grow"))
+  append(bar, btn("ghost small", "Formatear", || {
+    api("formatJson", { text: m.eventText }, |pretty| {
+      m.eventText = pretty
+      editor_set(editor, pretty)
+      touch(tab)
+    })
+  }))
+  let box_el = append(host, el("div", "editor"))
+  editor = editor_create(box_el, { value: m.eventText, language: "json" }, |text| {
+    m.eventText = text
+    touch(tab)
+  })
+}
+
+fn draw_config(host, tab) {
+  let m = tab.model
+  let wrap = append(host, el("div", "padded"))
+  append(wrap, field("Handler, para correr en local", text_input(m.handler, "src/handlers.crear", |v| {
+    m.handler = v
+    touch(tab)
+  })))
+  append(wrap, field("Carpeta del proyecto, relativa al workspace", text_input(m.cwd, ".", |v| {
+    m.cwd = v
+    touch(tab)
+  })))
+  append(wrap, el("div", "hint", "En local corre en un proceso aparte con las variables y secretos del entorno. La primera vez, Citrus te pide confirmar que confías en la carpeta."))
+  append(wrap, el("div", "hint", "En remoto usa el perfil y la región del bloque aws del entorno, o la cadena estándar de credenciales de AWS."))
+}
+
+fn draw_lambda_head(host, tab) {
+  let m = tab.model
+  let head = append(host, el("div", "req-head"))
+  let title = append(head, el("div", "req-title"))
+  let name = append(title, text_input(m.name, "Nombre", |v| {
+    m.name = v
+    touch(tab)
+  }, "name-input"))
+  attr(name, "aria-label", "Nombre")
+  let bar = append(head, el("div", "urlbar"))
+  append(bar, el("div", "lambda-tag", "λ"))
+  let fn_field = append(bar, el("div", "url-field"))
+  let fn_input = append(fn_field, text_input(m["function"], "Nombre o ARN de la función", |v| {
+    m["function"] = v
+    touch(tab)
+  }, "url-input plain"))
+  attr(fn_input, "aria-label", "Función")
+  let switcher = append(bar, el("div", "mode-switch"))
+  fn draw_mode() {
+    clear(switcher)
+    append(switcher, segmented([["local", "Local"], ["remote", "AWS"]], m.mode, |id| {
+      m.mode = id
+      touch(tab)
+      draw_mode()
+    }))
+  }
+  draw_mode()
+  send_button = append(bar, el("button", "send"))
+  attr(send_button, "title", "Invocar (Ctrl+Enter)")
+  on(send_button, "click", || {
+    if tab.sending { cancel_active() } else { send_active() }
+  })
+  update_send_state()
+}
+
+// ---------- Panel ----------
+
+export fn draw_request(host) {
+  drop_editor()
+  clear(host)
+  mirror = nil
+  resolved = nil
+  params_host = nil
+  subtabs_host = nil
+  sub_body = nil
+  send_button = nil
+  url_input = nil
+  let tab = active_tab()
+  if tab == nil { return nil }
+  if tab.model.type == "lambda" {
+    draw_lambda_head(host, tab)
+    subtabs_host = append(host, el("div", "subtabs"))
+    draw_subtabs(tab)
+    sub_body = append(host, el("div", "sub-body"))
+    draw_sub(tab)
+    return nil
+  }
+  let m = tab.model
+  let head = append(host, el("div", "req-head"))
+  let title_row = append(head, el("div", "req-title"))
+  let name = append(title_row, text_input(m.name, "Nombre de la request", |v| {
+    m.name = v
+    touch(tab)
+  }, "name-input"))
+  attr(name, "aria-label", "Nombre de la request")
+  append(title_row, btn("ghost small", "Código", || open_snippet(tab), "code"))
+
+  let bar = append(head, el("div", "urlbar"))
+  let method = append(bar, select_el("method-select m-{m.method}", METHODS.map(|x| [x, x]), m.method, |v| {
+    m.method = v
+    attr(method_ref(), "class", "method-select m-{v}")
+    touch(tab)
+  }))
+  attr(method, "aria-label", "Método")
+  method_el = method
+
+  let url_field = append(bar, el("div", "url-field"))
+  mirror = append(url_field, el("div", "url-mirror"))
+  url_input = append(url_field, text_input(m.url, 'https://api.ejemplo.com/orders  o  {{baseUrl}}/orders', |v| url_changed(tab, v), "url-input"))
+  attr(url_input, "aria-label", "URL")
+  sync_scroll(url_input, mirror)
+
+  send_button = append(bar, el("button", "send"))
+  attr(send_button, "title", "Enviar (Ctrl+Enter)")
+  on(send_button, "click", || {
+    if tab.sending { cancel_active() } else { send_active() }
+  })
+  update_send_state()
+
+  resolved = append(head, el("div", "resolved"))
+  draw_mirror(tab)
+
+  subtabs_host = append(host, el("div", "subtabs"))
+  draw_subtabs(tab)
+  sub_body = append(host, el("div", "sub-body"))
+  draw_sub(tab)
+}
+
+var method_el = nil
+fn method_ref() {
+  method_el
+}

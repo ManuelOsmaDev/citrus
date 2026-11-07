@@ -1,0 +1,10 @@
+{
+  "entry": "src/main.tng",
+  "out": "dist/index.html",
+  "title": "Citrus",
+  "lang": "es",
+  "styles": ["src/styles.css"],
+  "scripts": ["src/bridge.js"],
+  "head": "<script src=\"monaco/vs/loader.js\"></script>",
+  "runtime": "inline"
+}

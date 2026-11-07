@@ -1,0 +1,162 @@
+// Barra lateral: árbol de colecciones e historial.
+import { api, app, close_tab, open_request, refresh_history, refresh_tree } from "./state.tng"
+import { ask_text, confirm_box } from "./modals.tng"
+import { box, btn, fmt_ms, icon_btn, segmented, span, text_input, toast } from "./widgets.tng"
+
+fn method_tag(node) {
+  if node.type == "lambda" { return span("method m-lambda", "λ") }
+  if node.type == "invalid" { return span("method m-invalid", "!") }
+  let m = node.method ?? "GET"
+  span("method m-{m}", if m == "DELETE" { "DEL" } else if m == "OPTIONS" { "OPT" } else { m })
+}
+
+fn new_request(folder) {
+  ask_text("Nueva request", "Nombre", "Crear pedido", "Crear", |name| {
+    api("createRequest", { folder: folder, name: name }, |r| {
+      refresh_tree()
+      open_request(r.id)
+    })
+  })
+}
+
+fn new_folder(parent) {
+  ask_text("Nueva carpeta", "Nombre", "orders", "Crear", |name| {
+    api("createFolder", { parent: parent, name: name }, |r| refresh_tree())
+  })
+}
+
+fn delete_request(node) {
+  confirm_box("Mover a la papelera", "«{node.name}» se mueve a la papelera del sistema.", "Mover a la papelera", || {
+    api("deleteRequest", { id: node.id }, |r| {
+      if app.tabs.any(|t| t.id == node.id) {
+        let tab = app.tabs.find(|t| t.id == node.id)
+        tab.dirty = false
+        close_tab(node.id)
+      }
+      refresh_tree()
+    })
+  })
+}
+
+fn matches(node, needle) {
+  if node.kind == "request" { return node.name.lower().contains(needle) }
+  node.children.any(|c| matches(c, needle))
+}
+
+fn draw_nodes(host, nodes, depth, needle) {
+  let pad = 6 + depth * 12
+  for node in nodes {
+    if !needle.is_empty() && !matches(node, needle) { continue }
+    if node.kind == "folder" {
+      let is_open = !needle.is_empty() || app.collapsed[node.path] != true
+      let row = append(host, el("div", "tree-row folder-row"))
+      toggle_class(row, "open", is_open)
+      set_style(row, "padding-left", "{pad}px")
+      let chev = append(row, icon("chevron", 13))
+      attr(chev, "class", "chev")
+      let folder_icon = append(row, icon("folder", 14))
+      attr(folder_icon, "class", "folder-icon")
+      append(row, span("label", node.name))
+      append(row, icon_btn("play", "Correr esta carpeta", || app.ui.run_folder(node.path, node.name), "act"))
+      append(row, icon_btn("plus", "Nueva request aquí", || new_request(node.path), "act"))
+      on(row, "click", || {
+        app.collapsed[node.path] = is_open
+        draw_tree()
+      })
+      if is_open { draw_nodes(host, node.children, depth + 1, needle) }
+    } else {
+      let row = append(host, el("div", "tree-row"))
+      toggle_class(row, "on", node.id == app.active)
+      set_style(row, "padding-left", "{pad}px")
+      attr(row, "data-request", node.id)
+      append(row, method_tag(node))
+      let label = append(row, span("label", node.name))
+      if node.type == "invalid" { attr(label, "title", node.error) }
+      append(row, icon_btn("trash", "Mover a la papelera", || delete_request(node), "act"))
+      on(row, "click", || {
+        if node.type == "invalid" {
+          toast("YAML inválido: {node.error}", "error")
+        } else {
+          open_request(node.id)
+        }
+      })
+    }
+  }
+}
+
+var tree_host = nil
+
+fn draw_tree() {
+  if tree_host == nil { return nil }
+  clear(tree_host)
+  let needle = app.filter.trim().lower()
+  if app.tree.is_empty() {
+    let empty = append(tree_host, el("div", "side-empty"))
+    append(empty, el("div", nil, "La colección está vacía."))
+    append(empty, btn("primary", "Crear la primera request", || new_request(""), "plus"))
+    return nil
+  }
+  draw_nodes(tree_host, app.tree, 0, needle)
+}
+
+fn draw_history(host) {
+  let tools = append(host, el("div", "side-tools"))
+  append(tools, el("div", "grow hint", "{app.history.len()} envíos recientes"))
+  if !app.history.is_empty() {
+    append(tools, icon_btn("trash", "Vaciar historial", || {
+      confirm_box("Vaciar historial", "Se borra el historial local de este workspace.", "Vaciar", || {
+        api("historyClear", nil, |r| refresh_history())
+      })
+    }))
+  }
+  let list = append(host, el("div", "tree"))
+  if app.history.is_empty() {
+    append(list, el("div", "side-empty", "Aquí aparece cada request que envíes. Se guarda sin headers ni bodies."))
+    return nil
+  }
+  for h in app.history {
+    let row = append(list, el("div", "hist-row"))
+    let top = append(row, el("div", "hist-top"))
+    append(top, span("method m-{h.method}", h.method))
+    append(top, span("label", h.name))
+    let meta = append(row, el("div", "hist-meta"))
+    if h.error != nil {
+      append(meta, span("s-err", h.error))
+    } else {
+      append(meta, span("s-{(h.status / 100).floor()}", if h.method == "λ" { if h.status >= 500 { "error" } else { "ok" } } else { h.status }))
+      append(meta, span(nil, fmt_ms(h.durationMs)))
+    }
+    if h.env != nil { append(meta, span(nil, h.env)) }
+    append(meta, span(nil, time_ago(h.ts)))
+    on(row, "click", || {
+      if h.id != nil { open_request(h.id) }
+    })
+  }
+}
+
+export fn draw_sidebar(host) {
+  clear(host)
+  tree_host = nil
+  let head = append(host, el("div", "side-head"))
+  append(head, segmented([["collections", "Colecciones"], ["history", "Historial"]], app.side, |id| {
+    app.side = id
+    draw_sidebar(host)
+    if id == "history" { refresh_history() }
+  }))
+  if app.side == "history" {
+    draw_history(host)
+    return nil
+  }
+  let tools = append(host, el("div", "side-tools"))
+  let search = append(tools, el("div", "search"))
+  append(search, icon("search", 15))
+  let input = append(search, text_input(app.filter, "Buscar", |v| {
+    app.filter = v
+    draw_tree()
+  }))
+  attr(input, "aria-label", "Buscar requests")
+  append(tools, icon_btn("plus", "Nueva request", || new_request("")))
+  append(tools, icon_btn("folderPlus", "Nueva carpeta", || new_folder("")))
+  tree_host = append(host, el("div", "tree"))
+  draw_tree()
+}

@@ -1,0 +1,457 @@
+// Diálogos: preguntas simples, entornos y secretos, e importación.
+import { active_tab, api, app, open_request, refresh_env, refresh_envs, refresh_tree, select_env } from "./state.tng"
+import { box, btn, field, icon_btn, modal, rows_table, segmented, select_el, span, text_input, toast } from "./widgets.tng"
+
+export fn confirm_box(title, message, action_label, f) {
+  let body = el("div")
+  append(body, el("p", nil, message))
+  var close = nil
+  let cancel = btn("ghost", "Cancelar", || close())
+  let ok = btn("danger", action_label, || {
+    close()
+    f()
+  })
+  close = modal(title, body, [cancel, ok])
+  focus(cancel)
+}
+
+export fn ask_text(title, label, placeholder, action_label, f) {
+  let body = el("div")
+  var current = ""
+  var close = nil
+  fn submit() {
+    if !current.trim().is_empty() {
+      close()
+      f(current.trim())
+    }
+  }
+  let input = text_input("", placeholder, |v| {
+    current = v
+  })
+  on(input, "keydown", |e| {
+    if e.key == "Enter" { submit() }
+  })
+  append(body, field(label, input))
+  close = modal(title, body, [btn("ghost", "Cancelar", || close()), btn("primary", action_label, submit)])
+  focus(input)
+}
+
+// ---------- Entornos ----------
+
+fn variables_rows(variables) {
+  variables.entries().map(|pair| {
+    { key: pair[0], value: pair[1].to_string(), enabled: true }
+  })
+}
+
+fn secret_row(env_id, secret, reload) {
+  let line = el("div", "secret-row")
+  let name = append(line, el("div", "secret-name"))
+  append(name, icon("key", 14))
+  append(name, span(nil, secret.name))
+
+  var typed = ""
+  let input = text_input("", if secret.isSet { "••••••••  (escribe para reemplazar)" } else { "Pega el valor" }, |v| {
+    typed = v
+  })
+  attr(input, "type", "password")
+  attr(input, "autocomplete", "off")
+  append(line, input)
+
+  let state = span(if secret.isSet { "tag ok" } else { "tag bad" }, if secret.isSet { "en llavero" } else { "sin valor" })
+  append(line, state)
+
+  let actions = append(line, el("div", "secret-actions"))
+  append(actions, btn("", "Guardar", || {
+    if typed.is_empty() {
+      toast("Escribe el valor del secreto.", "error")
+      return nil
+    }
+    api("secretSet", { env: env_id, name: secret.name, value: typed }, |r| {
+      toast("Secreto guardado en el llavero del sistema.", "ok")
+      reload()
+    })
+  }))
+  if secret.own {
+    append(actions, icon_btn("trash", "Borrar secreto", || {
+      confirm_box("Borrar secreto", "Se borra «{secret.name}» del llavero y del entorno. No se puede deshacer.", "Borrar", || {
+        api("secretDelete", { env: env_id, name: secret.name }, |r| reload())
+      })
+    }))
+  }
+  line
+}
+
+fn draw_db_section(holder, info, form) {
+  let list = append(holder, el("div", "db-conns"))
+
+  fn draw_conn(name) {
+    let cfg = form.dbs[name]
+    let card = append(list, el("div", "db-conn"))
+    attr(card, "data-db-conn", name)
+    let head = append(card, el("div", "row-between"))
+    append(head, el("b", "mono", name))
+    let actions = append(head, el("div", "secret-actions"))
+    let result = el("div", "hint")
+    let tester = append(actions, btn("small", "Probar", || {
+      set_text(result, "Conectando…")
+      api("dbTest", { env: info.id, name: name }, |r| {
+        var text = "Conectado a MySQL {r.version}."
+        if r.canWrite { text += " Este usuario puede escribir: Citrus solo hace SELECT, pero conviene uno de solo lectura." }
+        if !r.binlog { text += " El binlog en ROW no está activo: solo funciona snapshot." } else if !r.canReplicate { text += " Sin REPLICATION SLAVE: solo funciona snapshot." }
+        set_text(result, text)
+      }, |e| set_text(result, e.message))
+    }))
+    attr(tester, "data-db-test", name)
+    append(actions, icon_btn("trash", "Quitar conexión", || {
+      form.dbs.remove(name)
+      remove(card)
+    }))
+    let grid = append(card, el("div", "db-conn-grid"))
+    fn text_field(label, key, placeholder) {
+      append(grid, field(label, text_input(if cfg[key] != nil { cfg[key].to_string() } else { "" }, placeholder, |v| {
+        if v.trim().is_empty() { cfg.remove(key) } else { cfg[key] = v.trim() }
+      })))
+    }
+    text_field("Host", "host", "127.0.0.1")
+    text_field("Puerto", "port", "3306")
+    text_field("Base", "database", "app")
+    text_field("Usuario", "user", "citrus_readonly")
+    text_field("Secreto con la contraseña", "passwordSecret", "dbPassword")
+    append(grid, field("Modo", select_el("input", [["snapshot", "Snapshot"], ["binlog", "Binlog"]], cfg.mode ?? "snapshot", |v| {
+      cfg.mode = v
+    })))
+    append(card, result)
+  }
+
+  for name in form.dbs.keys() { draw_conn(name) }
+  append(holder, btn("small", "Agregar conexión", || {
+    ask_text("Nueva conexión", "Nombre", "main", "Agregar", |name| {
+      if !form.dbs.has(name) {
+        form.dbs[name] = { host: "127.0.0.1", port: "3306", mode: "snapshot" }
+        draw_conn(name)
+      }
+    })
+  }, "plus"))
+  let note = append(holder, el("div", "hint"))
+  add_text(note, "Para un túnel SSH, ábrelo aparte con ")
+  append(note, el("code", nil, "ssh -L"))
+  add_text(note, " y apunta aquí a localhost. Guarda el entorno antes de probar. La contraseña se define abajo, en Secretos.")
+}
+
+export fn open_env_editor(start_id = nil) {
+  let body = el("div")
+  var selected = start_id ?? app.env
+  if selected == nil && !app.envs.is_empty() { selected = app.envs[0].id }
+  var form = nil
+
+  fn after_change() {
+    refresh_envs(|| {
+      if selected != nil { draw() }
+    })
+  }
+
+  fn draw() {
+    clear(body)
+    let chips = append(body, el("div", "env-tabs"))
+    for e in app.envs {
+      let chip = append(chips, el("button", "chip", e.name))
+      toggle_class(chip, "on", e.id == selected)
+      on(chip, "click", || {
+        selected = e.id
+        draw()
+      })
+    }
+    let add = append(chips, el("button", "chip", "+ Nuevo"))
+    on(add, "click", || {
+      ask_text("Nuevo entorno", "Nombre", "staging", "Crear", |name| {
+        api("envCreate", { id: name }, |r| {
+          selected = r.id
+          after_change()
+        })
+      })
+    })
+    if selected == nil {
+      append(body, el("p", nil, "Este workspace no tiene entornos todavía."))
+      return nil
+    }
+    let holder = append(body, el("div"))
+    set_style(holder, "display", "contents")
+    api("envDescribe", { id: selected }, |info| draw_env(holder, info))
+  }
+
+  fn draw_env(holder, info) {
+    clear(holder)
+    let rows = variables_rows(info.variables)
+    form = { rows: rows, is_protected: info["protected"], parent: info["extends"] ?? "", dbs: info.db ?? {} }
+
+    let protect = append(holder, el("label", "switch-row"))
+    let check = append(protect, el("input"))
+    attr(check, "type", "checkbox")
+    set_checked(check, info["protected"])
+    on(check, "change", || {
+      form.is_protected = checked(check)
+    })
+    let copy_box = append(protect, el("div", nil, "Entorno protegido"))
+    append(copy_box, el("small", nil, "Pide confirmación antes de enviar cualquier request que no sea GET."))
+
+    let others = app.envs.filter(|e| e.id != info.id).map(|e| [e.id, e.name])
+    let parents = [["", "Ninguno"]] + others
+    append(holder, field("Hereda de", select_el("input", parents, form.parent, |v| {
+      form.parent = v
+    })))
+
+    append(holder, el("div", "section-title", "Variables"))
+    append(holder, rows_table(rows, || nil, { key_placeholder: "Agregar variable", value_placeholder: "Valor", toggle: false }))
+
+    append(holder, el("div", "section-title", "Bases de datos"))
+    draw_db_section(holder, info, form)
+
+    append(holder, el("div", "section-title", "Secretos"))
+    let note = append(holder, el("div", "hint"))
+    add_text(note, "El valor queda en el llavero del sistema. En el YAML solo se guarda el nombre.")
+    for s in info.secrets {
+      append(holder, secret_row(info.id, s, after_change))
+    }
+    var new_secret = ""
+    let add_line = append(holder, el("div", "secret-row"))
+    append(add_line, text_input("", "nombre_del_secreto", |v| {
+      new_secret = v
+    }))
+    var new_value = ""
+    let new_input = text_input("", "Valor", |v| {
+      new_value = v
+    })
+    attr(new_input, "type", "password")
+    attr(new_input, "autocomplete", "off")
+    append(add_line, new_input)
+    append(add_line, span(nil, ""))
+    append(add_line, btn("", "Agregar", || {
+      if new_secret.trim().is_empty() || new_value.is_empty() {
+        toast("Escribe el nombre y el valor.", "error")
+        return nil
+      }
+      api("secretSet", { env: info.id, name: new_secret.trim(), value: new_value }, |r| {
+        toast("Secreto guardado en el llavero del sistema.", "ok")
+        after_change()
+      })
+    }))
+  }
+
+  fn save_env() {
+    if form == nil { return nil }
+    let variables = {}
+    for r in form.rows {
+      if !r.key.trim().is_empty() && r.enabled != false { variables[r.key.trim()] = r.value }
+    }
+    let payload = { id: selected, variables: variables }
+    payload["protected"] = form.is_protected
+    payload["extends"] = form.parent
+    payload["db"] = form.dbs
+    api("envSave", payload, |r| {
+      toast("Entorno guardado", "ok")
+      refresh_envs()
+    })
+  }
+
+  var close = nil
+  close = modal("Entornos", body, [
+    btn("ghost", "Cerrar", || close()),
+    btn("primary", "Guardar entorno", save_env),
+  ], { wide: true })
+  draw()
+}
+
+// ---------- Importar ----------
+
+fn import_report(report) {
+  refresh_tree()
+  refresh_envs()
+  if !report.created.is_empty() { open_request(report.created[0]) }
+  let new_envs = report.createdEnvs ?? []
+  let nothing_to_show = report.warnings.is_empty() && report.storedSecrets.is_empty() && new_envs.is_empty()
+  if nothing_to_show {
+    toast("Importadas: {report.created.len()}", "ok")
+    return nil
+  }
+  let body = el("div")
+  append(body, el("p", nil, "Se importaron {report.created.len()} request(s){if report.kind != nil { " desde {report.kind}" } else { "" }}."))
+  if !new_envs.is_empty() {
+    append(body, el("p", nil, "Entorno nuevo: {new_envs.join(", ")}. Revisa baseUrl antes de enviar."))
+  }
+  if !report.storedSecrets.is_empty() {
+    append(body, el("p", nil, "Credenciales movidas al llavero, en el entorno activo: {report.storedSecrets.join(", ")}. En los archivos solo queda la referencia."))
+  }
+  if !report.warnings.is_empty() {
+    append(body, el("div", "section-title", "Revisa esto"))
+    let list = append(body, el("ul", "warn-list"))
+    for w in report.warnings { append(list, el("li", nil, w)) }
+  }
+  var close = nil
+  close = modal("Importación lista", body, [btn("primary", "Listo", || close())])
+}
+
+export fn open_import() {
+  let body = el("div")
+  var text = ""
+  let area = append(body, el("textarea", "input mono"))
+  attr(area, "spellcheck", "false")
+  attr(area, "aria-label", "Comando cURL")
+  attr(area, "placeholder", "curl -X POST https://api.ejemplo.com/orders -H 'Authorization: Bearer ...' -d '...'")
+  on(area, "input", || {
+    text = value(area)
+  })
+  let env_label = if app.env != nil { "«{app.env}»" } else { "ninguno" }
+  append(body, el("div", "hint", "Tokens y claves se guardan como secretos del entorno activo ({env_label}). Nunca quedan en el YAML."))
+
+  var close = nil
+  close = modal("Importar", body, [
+    btn("ghost", "serverless.yml o SAM…", || {
+      api("importServerless", nil, |report| {
+        if report != nil {
+          close()
+          import_report(report)
+        }
+      })
+    }, "bolt"),
+    btn("ghost", "Colección de Postman…", || {
+      api("importPostman", { env: app.env }, |report| {
+        if report != nil {
+          close()
+          import_report(report)
+        }
+      })
+    }, "upload"),
+    box("grow"),
+    btn("ghost", "Cancelar", || close()),
+    btn("primary", "Importar cURL", || {
+      if text.trim().is_empty() {
+        toast("Pega un comando cURL.", "error")
+        return nil
+      }
+      api("importCurl", { text: text, env: app.env }, |report| {
+        close()
+        import_report(report)
+      })
+    }),
+  ], { wide: true })
+  focus(area)
+}
+
+// ---------- Detector de secretos ----------
+
+export fn secret_guard(findings, save_with) {
+  let body = el("div")
+  append(body, el("p", nil, "Este archivo va a Git y encontré credenciales escritas a mano. Muévelas al llavero: en el YAML quedará solo una referencia."))
+  for f in findings {
+    let row = append(body, el("div", "finding"))
+    append(row, el("b", nil, f.kind))
+    append(row, span(nil, f.where))
+    append(row, el("code", nil, f.preview))
+  }
+  var close = nil
+  let env_note = if app.env != nil { "Se guardan en el entorno «{app.env}»." } else { "Elige un entorno activo para poder moverlas." }
+  append(body, el("div", "hint", env_note))
+  close = modal("Hay credenciales en esta request", body, [
+    btn("ghost", "Cancelar", || close()),
+    btn("danger", "Guardar igual", || {
+      close()
+      save_with("force")
+    }),
+    btn("primary", "Mover al llavero y guardar", || {
+      close()
+      save_with("move")
+    }, "key"),
+  ])
+}
+
+// ---------- Copiar como código ----------
+
+export fn open_snippet(tab) {
+  if tab == nil { return nil }
+  if tab.model.type != "http" {
+    toast("Por ahora solo las requests HTTP se copian como código.", "error")
+    return nil
+  }
+  let body = el("div")
+  var language = "curl"
+  var code = ""
+  var editor = nil
+  let bar = append(body, el("div", "row-between"))
+  let holder = append(body, el("div", "editor"))
+  append(body, el("div", "hint", "Los secretos quedan como referencia. Un snippet se comparte en chats y PRs, así que nunca lleva el valor real."))
+
+  fn load_code() {
+    api("snippet", { model: tab.model, env: app.env, language: language }, |text| {
+      code = text
+      editor_set(editor, text)
+    })
+  }
+  fn draw_bar() {
+    clear(bar)
+    append(bar, segmented([["curl", "cURL"], ["fetch", "fetch"], ["axios", "axios"]], language, |id| {
+      language = id
+      draw_bar()
+      load_code()
+    }))
+  }
+  draw_bar()
+  editor = editor_create(holder, { value: "", language: "javascript", readOnly: true }, nil)
+  load_code()
+  var close = nil
+  var copy_button = nil
+  copy_button = btn("primary", "Copiar", || copy(code, copy_button), "copy")
+  close = modal("Copiar como código", body, [btn("ghost", "Cerrar", || close()), copy_button], {
+    wide: true,
+    on_close: || editor_dispose(editor),
+  })
+}
+
+// ---------- Correr una carpeta ----------
+
+export fn run_folder_view(folder, label) {
+  let body = el("div")
+  append(body, el("p", nil, "Corriendo {label}…"))
+  for w in ["70%", "52%", "83%"] {
+    let line = append(body, el("div", "skel"))
+    set_style(line, "width", w)
+  }
+  var close = nil
+  close = modal("Correr {label}", body, [btn("ghost", "Cerrar", || close())], { wide: true })
+  api("runFolder", { folder: folder, env: app.env }, |out| {
+    refresh_env()
+    clear(body)
+    let good = out.steps.filter(|s| s.ok).len()
+    let total = out.steps.len()
+    let all_ok = out.ok && total > 0
+    let title = append(body, el("div", if all_ok { "summary good" } else { "summary bad" }, "{good} de {total} correctas"))
+    attr(title, "data-run-summary", "{good}/{total}")
+    append(body, el("div", "hint", "Corren en orden alfabético: numera los archivos (1-login, 2-crear) para armar un flujo. Lo que una captura, lo usa la siguiente."))
+    if total == 0 { append(body, el("p", nil, "Esta carpeta no tiene requests.")) }
+    for s in out.steps {
+      let step = append(body, el("div", "run-step"))
+      let top = append(step, el("div", "run-top"))
+      let mark = append(top, el("span", "test-mark", if s.ok { "✓" } else { "✕" }))
+      set_style(mark, "color", if s.ok { "var(--ok)" } else { "var(--err)" })
+      let m = s.method ?? "GET"
+      append(top, span(if m == "λ" { "method m-lambda" } else { "method m-{m}" }, m))
+      append(top, span("label", s.name))
+      if s.status != nil { append(top, el("code", nil, s.status)) }
+      if s.summary.pass + s.summary.fail > 0 { append(top, el("code", nil, "{s.summary.pass}/{s.summary.pass + s.summary.fail} tests")) }
+      append(top, el("code", nil, "{s.ms.round()} ms"))
+      on(top, "click", || {
+        close()
+        open_request(s.id)
+      })
+      if s.error != nil { append(step, el("div", "run-why", s.error)) }
+      for t in s.tests.filter(|x| x.status == "fail" || x.status == "invalid") {
+        let why = append(step, el("div", "run-why"))
+        append(why, el("code", nil, t.text))
+        add_text(why, if t.actual != nil { " · valor real: {t.actual}" } else { " · {t.reason}" })
+      }
+    }
+  }, |e| {
+    clear(body)
+    append(body, el("p", nil, e.message))
+  })
+}

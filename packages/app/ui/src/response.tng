@@ -1,0 +1,558 @@
+// Panel derecho: lo que respondió el servidor o la Lambda.
+import { active_tab, api, app, cancel_active, refresh_db, start_logs } from "./state.tng"
+import { btn, fmt_bytes, fmt_ms, icon_btn, span, toast } from "./widgets.tng"
+
+var editor = nil
+
+let STATUS_TEXT = {
+  "200": "OK", "201": "Created", "202": "Accepted", "204": "No Content",
+  "301": "Moved", "302": "Found", "304": "Not Modified",
+  "400": "Bad Request", "401": "Unauthorized", "403": "Forbidden", "404": "Not Found", "409": "Conflict", "422": "Unprocessable", "429": "Too Many Requests",
+  "500": "Server Error", "502": "Bad Gateway", "503": "Unavailable", "504": "Gateway Timeout",
+}
+
+fn phases_of(t) {
+  [
+    ["DNS", t.dns, "var(--violet)"],
+    ["TCP", t.tcp, "var(--info)"],
+    ["TLS", t.tls, "var(--ok)"],
+    ["Espera", t.wait, "var(--accent)"],
+    ["Descarga", t.download, "var(--warn)"],
+  ]
+}
+
+fn drop_editor() {
+  editor_dispose(editor)
+  editor = nil
+}
+
+fn stat(host, val, label) {
+  let s = append(host, el("div", "stat"))
+  append(s, el("b", nil, val))
+  append(s, el("span", nil, label))
+  s
+}
+
+fn draw_table(host, rows) {
+  let table = append(host, el("table", "table"))
+  for r in rows {
+    let tr = append(table, el("tr"))
+    append(tr, el("td", nil, r.key))
+    append(tr, el("td", nil, r.value))
+  }
+}
+
+fn save_response(res) {
+  api("saveResponse", { runId: res.runId, suggested: "respuesta" }, |r| {
+    if r.saved { toast("Respuesta guardada", "ok") }
+  })
+}
+
+fn draw_body(host, res) {
+  let body = res.body
+  if body.isBinary {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, icon("file", 26))
+    append(empty, el("h3", nil, "Respuesta binaria"))
+    append(empty, el("p", nil, "{res.contentType ?? "Sin Content-Type"} · {fmt_bytes(body.size)}"))
+    append(empty, btn("", "Guardar en un archivo", || save_response(res), "download"))
+    return nil
+  }
+  if body.text.is_empty() {
+    append(host, el("div", "empty-sub", "La respuesta no tiene body."))
+    return nil
+  }
+  if res.truncated == true || body.tooLarge {
+    let note = append(host, el("div", "notice"))
+    append(note, icon("alert", 15))
+    append(note, el("div", nil, "Respuesta muy grande: se muestra solo una parte. Guárdala para verla completa."))
+  }
+  let box_el = append(host, el("div", "editor"))
+  editor = editor_create(box_el, { value: body.text, language: body.language, readOnly: true }, nil)
+}
+
+fn draw_timings(host, res) {
+  let t = res.timings
+  let wrap = append(host, el("div", "waterfall"))
+  let phases = phases_of(t)
+  let phases_total = phases.fold(0, |acc, p| acc + p[1])
+  let scale = if phases_total > 0 { phases_total } else { 1 }
+  var offset = 0
+  for p in phases {
+    let line = append(wrap, el("div", "wf-row"))
+    append(line, span(nil, p[0]))
+    let track = append(line, el("div", "wf-track"))
+    let bar = append(track, el("div", "wf-bar"))
+    set_style(bar, "left", "{offset / scale * 100}%")
+    set_style(bar, "width", "{p[1] / scale * 100}%")
+    set_style(bar, "background", p[2])
+    set_visible(bar, p[1] > 0)
+    append(line, span("wf-ms", if p[1] > 0 { fmt_ms(p[1]) } else { "–" }))
+    offset += p[1]
+  }
+  let total = append(wrap, el("div", "wf-total"))
+  append(total, span(nil, "Total"))
+  append(total, el("span"))
+  append(total, span("wf-ms", fmt_ms(t.total)))
+  if res.lambda != nil {
+    append(host, el("div", "section-title", "Lambda"))
+    draw_metrics(host, res)
+    let rest = t.wait - res.lambda.duration
+    append(wrap, el("div", "hint", "De la espera, {fmt_ms(res.lambda.duration)} fueron la Lambda" + if rest > 0 { " y {fmt_ms(rest)} API Gateway y la red." } else { "." }))
+  }
+  if !res.redirects.is_empty() {
+    append(wrap, el("div", "hint", "Los tiempos por fase son del último salto. El total incluye las {res.redirects.len()} redirección(es)."))
+  }
+}
+
+fn draw_sent(host, res) {
+  append(host, el("div", "section-title", "Request"))
+  append(host, el("div", "line", "{res.sent.method} {res.sent.url}"))
+  if !res.redirects.is_empty() {
+    append(host, el("div", "section-title", "Redirecciones"))
+    for r in res.redirects {
+      append(host, el("div", "line", "{r.status} → {r.to}"))
+    }
+  }
+  append(host, el("div", "section-title", "Headers enviados"))
+  draw_table(host, res.sent.headers)
+  append(host, el("div", "section-title", "Body"))
+  append(host, el("div", "line", if res.sent.bodySize > 0 { fmt_bytes(res.sent.bodySize) } else { "Sin body" }))
+}
+
+fn draw_tests(host, res) {
+  if res.tests.is_empty() && res.captured.is_empty() {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Esta request no tiene tests"))
+    append(empty, el("p", nil, "Abre la pestaña Tests de la request y usa «Generar desde la respuesta»."))
+    return nil
+  }
+  let list = append(host, el("div", "test-list"))
+  for t in res.tests {
+    let row = append(list, el("div", "test-row {t.status}"))
+    let mark = match t.status {
+      "pass" => "✓",
+      "pending" => "…",
+      _ => "✕",
+    }
+    append(row, el("span", "test-mark", mark))
+    append(row, el("span", "test-text", t.text))
+    if t.status == "fail" { append(row, el("div", "test-why", "Valor real: {t.actual}")) }
+    if t.reason != nil { append(row, el("div", "test-why", t.reason)) }
+  }
+  if !res.captured.is_empty() {
+    append(host, el("div", "section-title", "Capturado para las siguientes requests"))
+    for (k, v) in res.captured {
+      let row = append(host, el("div", "capture-row"))
+      append(row, el("b", nil, k))
+      append(row, span(nil, v))
+    }
+  }
+  if !res.captureMissing.is_empty() {
+    append(host, el("div", "section-title", "Sin valor: {res.captureMissing.join(", ")}"))
+  }
+}
+
+fn draw_diff(host, tab, res) {
+  if tab.prev == nil {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Aún no hay con qué comparar"))
+    append(empty, el("p", nil, "Envía otra vez esta request y aquí verás qué cambió en la respuesta."))
+    return nil
+  }
+  if tab.prev == res.body.text {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Sin cambios"))
+    append(empty, el("p", nil, "La respuesta es idéntica a la del envío anterior."))
+    return nil
+  }
+  let box_el = append(host, el("div", "editor"))
+  editor = diff_create(box_el, tab.prev, res.body.text, res.body.language)
+}
+
+fn draw_log_rows(host, logs) {
+  let list = append(host, el("div", "log-list"))
+  for l in logs {
+    let row = append(list, el("div", "log-row"))
+    toggle_class(row, "lv-row-error", l.level == "error" || l.level == "fatal")
+    toggle_class(row, "lv-row-system", l.level == "system")
+    append(row, span("log-time", fmt_time(l.ts)))
+    append(row, span("log-level lv-{l.level}", if l.level == "system" { "lambda" } else { l.level }))
+    let text_el = append(row, span("log-text", l.text))
+    if l.json {
+      toggle_class(row, "clickable", true)
+      attr(row, "title", "Clic para expandir")
+      var open = false
+      on(row, "click", || {
+        open = !open
+        set_text(text_el, if open { to_json(from_json(l.text), 2) } else { l.text })
+      })
+    }
+  }
+}
+
+fn draw_logs(host, tab, res) {
+  let state = res.logState
+  let logs = res.logs ?? []
+  if res.observation != nil && res.observation.error != nil {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "No se pudo observar"))
+    append(empty, el("p", nil, res.observation.error))
+    return nil
+  }
+  if res.kind == "http" && res.observation == nil {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Esta request no trae logs"))
+    append(empty, el("p", nil, "Actívalos en la pestaña Observar y ve aquí lo que pasó adentro de la Lambda."))
+    return nil
+  }
+  if state == "waiting" {
+    let bar = append(host, el("div", "log-status"))
+    append(bar, el("span", "pulse"))
+    append(bar, span(nil, "Esperando logs de CloudWatch. Suelen tardar unos segundos."))
+  }
+  if state == "timeout" || state == "error" {
+    let bar = append(host, el("div", "notice"))
+    append(bar, icon("alert", 15))
+    let info = append(bar, el("div", "grow"))
+    if state == "timeout" {
+      add_text(info, "CloudWatch no entregó los logs a tiempo. Puede que la request no haya llegado a la Lambda.")
+    } else {
+      add_text(info, res.logError.message)
+    }
+    append(bar, btn("small", "Reintentar", || {
+      start_logs(tab, res)
+      app.ui.response()
+    }))
+  }
+  if state == "ambiguous" {
+    let box_el = append(host, el("div", "padded"))
+    append(box_el, el("div", nil, "Varias invocaciones corrieron en ese momento y la respuesta no trae un id para distinguirlas. Elige una."))
+    for c in res.logCandidates {
+      let row = append(box_el, btn("candidate", "{fmt_time(c.ts)}  {c.id}", || {
+        start_logs(tab, res, c.id)
+        app.ui.response()
+      }))
+      attr(row, "data-candidate", c.id)
+    }
+    return nil
+  }
+  if res.logApproximate == true {
+    let bar = append(host, el("div", "notice"))
+    append(bar, icon("alert", 15))
+    append(bar, el("div", nil, "Coincidencia por hora: la respuesta no trae el id de la Lambda. Fue la única invocación en ese momento, pero podría ser de otra persona."))
+  }
+  if logs.is_empty() {
+    if state != "waiting" { append(host, el("div", "empty-sub", "La función no escribió logs.")) }
+    return nil
+  }
+  draw_log_rows(host, logs)
+}
+
+// ---------- Base de datos ----------
+
+fn draw_cell(tr, val, cls) {
+  let td = append(tr, el("td", cls))
+  if val == nil {
+    append(td, span("db-null", "NULL"))
+  } else {
+    add_text(td, val)
+    if val.len() > 60 { attr(td, "title", val) }
+  }
+  td
+}
+
+fn draw_db_rows(host, table, label, kind, rows, total) {
+  if rows.is_empty() { return nil }
+  let title = append(host, el("div", "db-kind {kind}"))
+  add_text(title, "{label} · {total}")
+  let scroll = append(host, el("div", "db-scroll"))
+  let grid = append(scroll, el("table", "db-grid"))
+  let head = append(grid, el("tr"))
+  for col in table.columns {
+    let th = append(head, el("th", nil, col))
+    if table.pk.contains(col) { toggle_class(th, "pk", true) }
+  }
+  for row in rows {
+    let tr = append(grid, el("tr", "db-row {kind}"))
+    if kind == "upd" {
+      for col in table.columns {
+        if row.changed.contains(col) {
+          let td = append(tr, el("td", "db-cell changed"))
+          if row.before[col] == nil { append(td, span("db-old", "NULL")) } else { append(td, span("db-old", row.before[col])) }
+          if row.after[col] == nil { append(td, span("db-null", "NULL")) } else { append(td, span("db-new", row.after[col])) }
+        } else {
+          draw_cell(tr, row.after[col], "db-cell")
+        }
+      }
+    } else {
+      for col in table.columns { draw_cell(tr, row[col], "db-cell") }
+    }
+  }
+  if total > rows.len() {
+    append(host, el("div", "hint db-more", "Se muestran {rows.len()} de {total}. Los tests cuentan todas."))
+  }
+}
+
+fn draw_db(host, tab, res) {
+  let db = res.db
+  if db == nil {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Esta request no observa la base"))
+    append(empty, el("p", nil, "Elige una conexión en la pestaña Observar y ve aquí qué filas cambió cada envío."))
+    return nil
+  }
+  if db.error != nil {
+    let wrap = append(host, el("div", "res-empty"))
+    let card = append(wrap, el("div", "err-card"))
+    attr(card, "role", "alert")
+    let title = append(card, el("h3"))
+    append(title, icon("alert", 17))
+    add_text(title, "No se pudo leer la base")
+    append(card, el("div", nil, db.error.message))
+    append(card, el("code", nil, db.error.code))
+    return nil
+  }
+  let bar = append(host, el("div", "body-bar"))
+  let mode = append(bar, span("db-mode", "{db.connection} · {db.mode}"))
+  attr(mode, "data-db-mode", db.mode)
+  append(bar, el("div", "grow"))
+  if db.mode == "snapshot" {
+    let again = append(bar, btn("ghost small", "Comparar de nuevo", || refresh_db(tab, res)))
+    attr(again, "title", "Para escrituras tardías, como las de una cola: compara la base de ahora con la foto de antes del envío.")
+  }
+  if db.changes == 0 && db.tables.all(|t| t.error == nil) {
+    let empty = append(host, el("div", "res-empty"))
+    append(empty, el("h3", nil, "Sin cambios"))
+    let names = db.tables.map(|t| t.name)
+    append(empty, el("p", nil, if names.is_empty() { "No hay tablas para comparar." } else { "Esta request no cambió {names.join(", ")}." }))
+  }
+  let list = append(host, el("div", "db-list"))
+  for t in db.tables {
+    if t.error != nil {
+      let section = append(list, el("section", "db-table"))
+      append(section, el("h4", nil, t.name))
+      let note = append(section, el("div", "notice"))
+      append(note, icon("alert", 15))
+      append(note, el("div", nil, t.error))
+      continue
+    }
+    let total = t.counts.inserted + t.counts.updated + t.counts.deleted
+    if total == 0 { continue }
+    let section = append(list, el("section", "db-table"))
+    append(section, el("h4", nil, t.name))
+    draw_db_rows(section, t, "Nuevas", "ins", t.inserted, t.counts.inserted)
+    draw_db_rows(section, t, "Cambiadas", "upd", t.updated, t.counts.updated)
+    draw_db_rows(section, t, "Borradas", "del", t.deleted, t.counts.deleted)
+  }
+  if !(db.skipped ?? []).is_empty() {
+    append(host, el("div", "line hint", "Sin comparar, por ser muy grandes: {db.skipped.join(", ")}. Nómbralas en Observar con un WHERE."))
+  }
+}
+
+fn draw_metrics(host, res) {
+  let m = res.lambda
+  let rows = [
+    { key: "Función", value: res.functionName ?? res.observation.logGroup },
+    { key: "Modo", value: if res.mode == "local" { "Local, proceso aparte" } else if res.kind == "lambda" { "Remoto, AWS Invoke" } else { "Por HTTP, leído de CloudWatch" } },
+    { key: "Duración", value: fmt_ms(m.duration) },
+    { key: "Duración facturada", value: fmt_ms(m.billed) },
+    { key: "Memoria usada", value: if m.memory == nil { "–" } else if m.memorySize != nil { "{m.memory} de {m.memorySize} MB" } else { "{m.memory} MB" } },
+    { key: "Inicialización", value: fmt_ms(m.init) },
+    { key: "Cold start", value: if m.coldStart { "Sí" } else { "No" } },
+    { key: "Request ID", value: m.requestId ?? "–" },
+    { key: "Error", value: m.error ?? "Ninguno" },
+  ]
+  draw_table(host, rows)
+  if res.mode == "local" {
+    append(host, el("div", "line hint", "En local cada invocación es un proceso nuevo, así que siempre arranca en frío. La memoria es la del proceso de Node, no la de un contenedor de Lambda."))
+  }
+}
+
+fn draw_lambda_stats(head, res) {
+  let m = res.lambda
+  if m.memory != nil {
+    let s = stat(head, "{m.memory} MB", "memoria")
+    toggle_class(s, "opt", true)
+  }
+  if m.init != nil {
+    let s = stat(head, fmt_ms(m.init), "init")
+    toggle_class(s, "opt", true)
+  }
+  if m.coldStart {
+    let pill = append(head, span("pill cold", "Cold start"))
+    attr(pill, "data-cold", "1")
+  }
+}
+
+fn tests_badge(b, res) {
+  let s = res.testSummary
+  if s.fail > 0 {
+    append(b, span("count bad", s.fail))
+  } else if s.pass > 0 {
+    append(b, span("count good", s.pass))
+  }
+}
+
+fn draw_result(host, tab) {
+  let res = tab.response
+  let is_lambda = res.kind == "lambda"
+  let status_class = if is_lambda { if res.functionError != nil { 5 } else { 2 } } else { (res.status / 100).floor() }
+  let head = append(host, el("div", "res-head t{status_class}"))
+
+  let badge = append(head, el("div", "status c{status_class}"))
+  if is_lambda {
+    add_text(badge, if res.functionError != nil { "Error" } else { "OK" })
+    append(badge, el("small", nil, if res.functionError != nil { res.functionError } else { if res.mode == "local" { "Local" } else { "AWS" } }))
+    attr(badge, "data-lambda", if res.functionError != nil { "error" } else { "ok" })
+    stat(head, fmt_ms(res.lambda.duration), "duración")
+    draw_lambda_stats(head, res)
+  } else {
+    add_text(badge, res.status)
+    append(badge, el("small", nil, STATUS_TEXT.get(res.status.to_string(), "")))
+    attr(badge, "data-status", res.status)
+    stat(head, fmt_ms(res.timings.total), "tiempo")
+    let size_stat = stat(head, fmt_bytes(res.wireSize), "tamaño")
+    if res.lambda != nil {
+      stat(head, fmt_ms(res.lambda.duration), "en Lambda")
+      draw_lambda_stats(head, res)
+    } else if res.logState == "waiting" {
+      let waiting = append(head, el("button", "pill logs-wait"))
+      attr(waiting, "data-logs-waiting", "1")
+      append(waiting, el("span", "pulse"))
+      add_text(waiting, "Logs")
+      on(waiting, "click", || select("logs"))
+    }
+  }
+
+  let tabs_el = el("div", "subtabs")
+  let area = el("div", "sub-body")
+
+  let s = res.testSummary
+  if s.fail + s.pass > 0 {
+    let good = s.fail == 0
+    let pill = append(head, el("button", "pill {if good { "good" } else { "bad" }}", if good { if s.pass == 1 { "1 test ok" } else { "{s.pass} tests ok" } } else { "{s.fail} de {s.fail + s.pass} fallan" }))
+    attr(pill, "data-tests", if good { "ok" } else { "fail" })
+    on(pill, "click", || select("tests"))
+  }
+  append(head, el("div", "grow"))
+  if !res.body.isBinary {
+    append(head, icon_btn("copy", "Copiar la respuesta", || copy(res.body.text)))
+  }
+  append(head, icon_btn("download", "Guardar la respuesta", || save_response(res)))
+  if res.traceUrl != nil {
+    let trace = append(head, icon_btn("layers", "Abrir la traza de X-Ray en AWS", || api("openTrace", { runId: res.runId }, |r| nil)))
+    attr(trace, "data-trace", "1")
+  }
+
+  if !is_lambda {
+    let bar = append(head, el("div", "phase-bar"))
+    let t = res.timings
+    for p in phases_of(t) {
+      if p[1] > 0 {
+        let seg = append(bar, el("span"))
+        set_style(seg, "flex", "{p[1]} 1 0")
+        set_style(seg, "background", p[2])
+        attr(seg, "title", "{p[0]}: {fmt_ms(p[1])}")
+      }
+    }
+  }
+
+  append(host, tabs_el)
+  append(host, area)
+
+  let items = if is_lambda {
+    [["body", "Payload"], ["logs", "Logs"], ["db", "DB"], ["tests", "Tests"], ["diff", "Cambios"], ["metrics", "Métricas"]]
+  } else {
+    [["body", "Body"], ["logs", "Logs"], ["db", "DB"], ["tests", "Tests"], ["diff", "Cambios"], ["headers", "Headers"], ["timings", "Tiempos"], ["sent", "Enviado"]]
+  }
+
+  fn select(id) {
+    tab.res_tab = id
+    draw_tabs()
+    drop_editor()
+    clear(area)
+    match id {
+      "body" => draw_body(area, res),
+      "headers" => draw_table(area, res.headers),
+      "timings" => draw_timings(area, res),
+      "sent" => draw_sent(area, res),
+      "tests" => draw_tests(area, res),
+      "diff" => draw_diff(area, tab, res),
+      "logs" => draw_logs(area, tab, res),
+      "db" => draw_db(area, tab, res),
+      "metrics" => draw_metrics(area, res),
+      _ => nil,
+    }
+  }
+  fn draw_tabs() {
+    clear(tabs_el)
+    for item in items {
+      let b = append(tabs_el, el("button", "subtab", item[1]))
+      toggle_class(b, "on", tab.res_tab == item[0])
+      attr(b, "data-restab", item[0])
+      if item[0] == "headers" { append(b, span("count", res.headers.len())) }
+      if item[0] == "tests" { tests_badge(b, res) }
+      if item[0] == "db" && res.db != nil {
+        if res.db.error != nil { append(b, span("count bad", "!")) } else if res.db.changes > 0 { append(b, span("count", res.db.changes)) }
+      }
+      if item[0] == "logs" {
+        if res.logs != nil && !res.logs.is_empty() { append(b, span("count", res.logs.len())) } else if res.logState == "waiting" { append(b, el("span", "pulse")) }
+      }
+      if item[0] == "diff" && tab.prev != nil && tab.prev != res.body.text { append(b, el("span", "dot")) }
+      on(b, "click", || select(item[0]))
+    }
+  }
+  let known = items.any(|i| i[0] == tab.res_tab)
+  select(if known { tab.res_tab } else { "body" })
+}
+
+fn draw_waiting(host) {
+  let wait = append(host, el("div", "skeleton"))
+  let top = append(wait, el("div", "skeleton-head"))
+  append(top, el("span", nil, "Esperando respuesta…"))
+  append(top, btn("ghost small", "Cancelar", cancel_active))
+  for w in ["42%", "78%", "64%", "86%", "38%", "71%", "55%"] {
+    let line = append(wait, el("div", "skel"))
+    set_style(line, "width", w)
+  }
+}
+
+export fn draw_response(host) {
+  drop_editor()
+  clear(host)
+  let tab = active_tab()
+  if tab == nil { return nil }
+  if tab.sending {
+    draw_waiting(host)
+    return nil
+  }
+  if tab.error != nil {
+    let wrap = append(host, el("div", "res-empty"))
+    let card = append(wrap, el("div", "err-card"))
+    attr(card, "role", "alert")
+    let title = append(card, el("h3"))
+    append(title, icon("alert", 17))
+    add_text(title, "No se pudo completar")
+    append(card, el("div", nil, tab.error.message))
+    append(card, el("code", nil, tab.error.code))
+    return nil
+  }
+  if tab.response != nil {
+    draw_result(host, tab)
+    return nil
+  }
+  let empty = append(host, el("div", "res-empty"))
+  append(empty, logo(40))
+  if tab.model.type == "lambda" {
+    append(empty, el("h3", nil, "Invoca la función"))
+    append(empty, el("p", nil, "Verás el payload, los logs, la duración y la memoria en esta misma pantalla."))
+  } else {
+    append(empty, el("h3", nil, "Listo para enviar"))
+    append(empty, el("p", nil, "La respuesta, sus tiempos y sus tests aparecen aquí."))
+  }
+  let hint = append(empty, el("p"))
+  append(hint, el("span", "kbd", "Ctrl"))
+  add_text(hint, " + ")
+  append(hint, el("span", "kbd", "Enter"))
+}

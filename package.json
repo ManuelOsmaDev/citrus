@@ -1,0 +1,19 @@
+{
+  "name": "citrus-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "workspaces": ["packages/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "npm run start -w @citrus/app",
+    "build": "npm run build -w @citrus/app",
+    "test": "npm test -w @citrus/core",
+    "test:db": "npm run test:db -w @citrus/core",
+    "test:e2e": "npm run test:e2e -w @citrus/app",
+    "demo:api": "node examples/serverless-mysql-demo/demo-api.mjs",
+    "dist": "npm run dist -w @citrus/app",
+    "site": "npm run build -w @citrus/site"
+  }
+}

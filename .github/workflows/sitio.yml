@@ -1,0 +1,50 @@
+name: Publicar la web de Citrus
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # La web no necesita Electron: se omite su descarga.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # El instalador se baja del Release solo para calcular tamaño y SHA-256.
+      # La descarga de la web apunta al Release; el .exe no se copia al sitio.
+      - name: Datos del instalador
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./packages/app/package.json').version")
+          echo "CITRUS_DOWNLOAD_URL=https://github.com/${{ github.repository }}/releases/download/v$VERSION/Citrus-Setup-$VERSION.exe" >> "$GITHUB_ENV"
+          gh release download "v$VERSION" --pattern "*.exe" --dir packages/app/release || echo "Todavía no hay Release v$VERSION: la web se publica sin descarga."
+      - run: npm run site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/site/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,20 @@
+name: dev
+protected: false
+variables:
+  baseUrl: http://localhost:4010
+  stage: dev
+secrets:
+  - token
+# demo-api.mjs también simula CloudWatch y Lambda: así se ve todo sin cuenta de AWS.
+# Bórralo para usar tus credenciales y tu AWS de verdad.
+aws:
+  endpoint: http://localhost:4010
+  region: us-east-1
+# npm run demo:api levanta este MySQL temporal.
+db:
+  main:
+    host: 127.0.0.1
+    port: 3307
+    database: app
+    user: root
+    mode: snapshot

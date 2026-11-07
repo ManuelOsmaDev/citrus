@@ -1,0 +1,678 @@
+// Página de Citrus, escrita en Tangerine.
+import { RELEASE } from "./release.tng"
+
+// Cuando el código esté publicado, pon aquí su URL: el paso de instalación desde el código la usa.
+let REPO_URL = "https://github.com/ManuelOsmaDev/citrus"
+
+let root = query("#app")
+
+// ---------- Piezas ----------
+
+fn node(tag, cls, children = []) {
+  let e = el(tag, cls)
+  for c in children {
+    if c != nil { append(e, c) }
+  }
+  e
+}
+
+fn link(cls, label, href) {
+  let a = el("a", cls, label)
+  attr(a, "href", href)
+  a
+}
+
+fn image(src, alt, cls = nil) {
+  let i = el("img", cls)
+  attr(i, "src", src)
+  attr(i, "alt", alt)
+  attr(i, "width", "1440")
+  attr(i, "height", "900")
+  i
+}
+
+// Marca un elemento para que entre al hacer scroll. `i` es su turno dentro del grupo.
+fn rv(e, i = 0) {
+  toggle_class(e, "reveal", true)
+  set_style(e, "--i", i)
+  e
+}
+
+fn section_block(id, children) {
+  let s = el("section")
+  attr(s, "id", id)
+  let w = append(s, el("div", "wrap block"))
+  for c in children {
+    if c != nil { append(w, c) }
+  }
+  s
+}
+
+// Texto con `código` adentro, sin escribir HTML a mano.
+fn rich(tag, cls, parts) {
+  let e = el(tag, cls)
+  for p in parts {
+    if type_of(p) == "List" { append(e, el("code", nil, p[0])) } else { add_text(e, p) }
+  }
+  e
+}
+
+fn command(text) {
+  let box_el = el("div", "code cmd")
+  append(box_el, node("pre", nil, [el("code", nil, text)]))
+  let b = append(box_el, el("button", "copy", "Copiar"))
+  attr(b, "aria-label", "Copiar: {text}")
+  on(b, "click", || copy(text, b))
+  box_el
+}
+
+// Colorea solo las claves: suficiente para leer un YAML sin cargar un resaltador.
+fn yaml_block(label, lines) {
+  let box_el = el("div", "code")
+  append(box_el, el("div", "code-label", label))
+  let body = el("code")
+  for (n, line) in lines.enumerate() {
+    let row = rv(append(body, el("span", "y-line")), n)
+    let at = line.index_of(":")
+    let trimmed = line.trim()
+    if trimmed.starts_with("#") {
+      append(row, el("span", "y-note", line))
+    } else if at != nil && at > 0 && !trimmed.starts_with("-") {
+      append(row, el("span", "y-key", line.slice(0, at)))
+      add_text(row, line.slice(at))
+    } else {
+      add_text(row, line)
+    }
+  }
+  append(box_el, node("pre", nil, [body]))
+  box_el
+}
+
+// ---------- Navegación ----------
+
+fn draw_nav() {
+  let nav = el("header", "nav")
+  append(nav, el("div", "progress"))
+  let inner = append(nav, el("div", "wrap nav-in"))
+  let brand = append(inner, link("brand", nil, "#inicio"))
+  append(brand, image("assets/logo.svg", ""))
+  add_text(brand, "Citrus")
+  let links = append(inner, el("nav", "nav-links"))
+  attr(links, "aria-label", "Secciones")
+  for item in [["Qué es", "#que-es"], ["Funciones", "#funciones"], ["Descargar", "#descargar"], ["Usar", "#usar"], ["Estado", "#estado"]] {
+    append(links, link(nil, item[0], item[1]))
+  }
+  append(inner, link("btn primary small", "Descargar", "#descargar"))
+  nav
+}
+
+// ---------- Consola en vivo ----------
+// Todo existe desde el principio y solo cambia su visibilidad: la página no salta mientras se anima.
+
+let URL_VAR = '{{baseUrl}}'
+let URL_PATH = "/orders"
+
+fn draw_console() {
+  let items = []
+  let box_el = el("div", "console")
+  attr(box_el, "role", "img")
+  attr(box_el, "aria-label", "Simulación de Citrus: un POST a /orders responde 201 en 96 milisegundos. En la misma pantalla aparecen los logs de la Lambda, un cold start, las filas nuevas en MySQL y cinco tests cumplidos.")
+  let inner = append(box_el, el("div", "c-inner"))
+  attr(inner, "aria-hidden", "true")
+
+  fn item(e, cls = "c-item") {
+    toggle_class(e, cls, true)
+    items.push(e)
+    e
+  }
+
+  // Barra de la request
+  let bar = append(inner, el("div", "c-bar"))
+  append(bar, el("span", "c-method", "POST"))
+  let url = append(bar, el("span", "c-url"))
+  let url_var = append(url, el("span", "c-var"))
+  let url_path = append(url, el("span"))
+  let caret = append(url, el("span", "c-caret"))
+  let send_btn = append(bar, el("span", "c-send", "Enviar"))
+
+  let grid = append(inner, el("div", "c-grid"))
+
+  // Respuesta
+  let response = append(grid, el("div", "c-pane"))
+  append(response, el("div", "c-title", "Respuesta"))
+  let wait = append(response, el("div", "c-wait", "Esperando…"))
+  let status = item(append(response, el("div", "c-status")))
+  append(status, el("b", nil, "201"))
+  add_text(status, " Created")
+  let time = append(status, el("span", "c-time", "0 ms"))
+  let phases = item(append(response, el("div", "c-phases")), "c-phases-item")
+  for p in [[2, "var(--c-a)"], [3, "var(--c-b)"], [86, "var(--accent)"], [2, "var(--c-c)"]] {
+    let seg = append(phases, el("span"))
+    set_style(seg, "flex", "{p[0]} 1 0")
+    set_style(seg, "background", p[1])
+  }
+  let json = append(response, el("div", "c-json"))
+  let json_lines = []
+  for line in ['{', '  "id": 1009,', '  "productId": 42,', '  "status": "pending"', '}'] {
+    json_lines.push(item(append(json, el("div", nil, line))))
+  }
+
+  // Logs
+  let logs = append(grid, el("div", "c-pane"))
+  append(logs, el("div", "c-title", "Logs de CloudWatch"))
+  let log_rows = []
+  for l in [
+    ["sys", "START RequestId: 7cc8…f457c"],
+    ["info", "Procesando createOrder"],
+    ["info", '{ "msg": "Consulta a MySQL" }'],
+    ["warn", "Stock bajo para el producto 42"],
+    ["sys", "REPORT Duration: 87 ms"],
+  ] {
+    let row = item(append(logs, el("div", "c-log {l[0]}")))
+    append(row, el("i", nil, if l[0] == "sys" { "λ" } else { l[0] }))
+    append(row, el("span", nil, l[1]))
+    log_rows.push(row)
+  }
+  let pills = append(logs, el("div", "c-pills"))
+  let pill_time = item(append(pills, el("span", "c-pill", "87 ms en Lambda")))
+  let pill_mem = item(append(pills, el("span", "c-pill", "76 MB")))
+  let pill_cold = item(append(pills, el("span", "c-pill cold", "Cold start")))
+
+  // Base de datos y tests
+  let side = append(grid, el("div", "c-pane"))
+  append(side, el("div", "c-title", "MySQL"))
+  let db_a = item(append(side, el("div", "c-row")))
+  append(db_a, el("b", nil, "orders"))
+  append(db_a, el("span", nil, "+ 1009 · pending"))
+  let db_b = item(append(side, el("div", "c-row")))
+  append(db_b, el("b", nil, "order_items"))
+  append(db_b, el("span", nil, "+ SKU-42 · 60000"))
+  append(side, el("div", "c-title c-title-2", "Tests"))
+  let test_rows = []
+  for t in ["status == 201", "body.id exists", "db.orders.inserted == 1", "logs.errors == 0", "lambda.duration < 500"] {
+    let row = item(append(side, el("div", "c-test")))
+    append(row, el("i", nil, "✓"))
+    append(row, el("span", nil, t))
+    test_rows.push(row)
+  }
+
+  var run_id = 0
+
+  fn set_url(n) {
+    set_text(url_var, URL_VAR.slice(0, min(n, URL_VAR.len())))
+    set_text(url_path, if n > URL_VAR.len() { URL_PATH.slice(0, n - URL_VAR.len()) } else { "" })
+  }
+
+  fn turn_on(e) {
+    toggle_class(e, "on", true)
+  }
+
+  fn reset() {
+    toggle_class(box_el, "instant", true)
+    for e in items { toggle_class(e, "on", false) }
+    toggle_class(wait, "on", false)
+    toggle_class(caret, "on", true)
+    toggle_class(send_btn, "press", false)
+    set_text(time, "0 ms")
+    set_url(0)
+    toggle_class(box_el, "fading", false)
+    after(30, || toggle_class(box_el, "instant", false))
+  }
+
+  // Línea de tiempo: [milisegundos, qué pasa].
+  fn timeline() {
+    let full = URL_VAR.len() + URL_PATH.len()
+    let steps = []
+    for n in 1..=full { steps.push([250 + n * 36, || set_url(n)]) }
+    let send_at = 250 + full * 36 + 260
+    steps.push([send_at, || {
+      toggle_class(caret, "on", false)
+      toggle_class(send_btn, "press", true)
+      toggle_class(wait, "on", true)
+    }])
+    steps.push([send_at + 130, || toggle_class(send_btn, "press", false)])
+    let answer = send_at + 650
+    steps.push([answer, || {
+      toggle_class(wait, "on", false)
+      turn_on(status)
+      turn_on(phases)
+    }])
+    for (i, v) in [14, 38, 63, 84, 96].enumerate() {
+      steps.push([answer + i * 70, || set_text(time, "{v} ms")])
+    }
+    for (i, line) in json_lines.enumerate() { steps.push([answer + 120 + i * 60, || turn_on(line)]) }
+    let logs_at = answer + 500
+    for (i, row) in log_rows.enumerate() { steps.push([logs_at + i * 300, || turn_on(row)]) }
+    let pills_at = logs_at + log_rows.len() * 300
+    for (i, p) in [pill_time, pill_mem, pill_cold].enumerate() { steps.push([pills_at + i * 80, || turn_on(p)]) }
+    let db_at = pills_at + 320
+    steps.push([db_at, || turn_on(db_a)])
+    steps.push([db_at + 140, || turn_on(db_b)])
+    let tests_at = db_at + 420
+    for (i, row) in test_rows.enumerate() { steps.push([tests_at + i * 150, || turn_on(row)]) }
+    { steps: steps, end: tests_at + test_rows.len() * 150 + 3600 }
+  }
+
+  fn play() {
+    run_id += 1
+    let me = run_id
+    reset()
+    let plan = timeline()
+    for step in plan.steps {
+      after(step[0], || {
+        if me == run_id { step[1]() }
+      })
+    }
+    after(plan.end, || {
+      if me == run_id {
+        toggle_class(box_el, "fading", true)
+        after(380, || {
+          if me == run_id { play() }
+        })
+      }
+    })
+  }
+
+  // Con movimiento reducido se ve el resultado final, sin bucle.
+  fn draw_final() {
+    set_url(URL_VAR.len() + URL_PATH.len())
+    set_text(time, "96 ms")
+    for e in items { toggle_class(e, "on", true) }
+  }
+
+  if reduced_motion() {
+    draw_final()
+  } else {
+    reset()
+    // Fuera de pantalla no corre: no gasta batería en algo que nadie mira.
+    on_view(box_el, play, || {
+      run_id += 1
+    })
+  }
+  box_el
+}
+
+// ---------- Portada ----------
+
+fn draw_hero() {
+  let hero = el("div", "hero")
+  attr(hero, "id", "inicio")
+  let slice = append(hero, image("assets/logo.svg", "", "hero-slice"))
+  attr(slice, "aria-hidden", "true")
+  let w = append(hero, el("div", "wrap hero-in"))
+  append(w, el("h1", "rise", "Lo que tu endpoint respondió, y lo que pasó adentro."))
+  let lead = append(w, el("p", "lead rise", "Citrus es un cliente de APIs para backends serverless. Mandas un request y ves en la misma pantalla la respuesta, los logs de esa invocación, el cold start y las filas que cambió en MySQL."))
+  set_style(lead, "--i", 1)
+  let actions = append(w, node("div", "hero-actions rise", [
+    link("btn primary", if RELEASE != nil { "Descargar para Windows" } else { "Instalar Citrus" }, "#descargar"),
+    link("btn", "Ver qué hace", "#funciones"),
+  ]))
+  set_style(actions, "--i", 2)
+  let note = append(w, el("p", "hero-note rise", "Código abierto con licencia MIT. Sin cuenta y sin nube. En desarrollo."))
+  set_style(note, "--i", 3)
+  let shot = append(w, el("div", "hero-console rise"))
+  set_style(shot, "--i", 4)
+  append(shot, draw_console())
+  append(shot, el("p", "console-note", "Simulación con datos de ejemplo. Abajo están las capturas reales."))
+  hero
+}
+
+// ---------- Qué es ----------
+
+fn draw_what() {
+  let left = el("div", "sticky")
+  append(left, rv(el("h2", nil, "Depurar un endpoint no debería ser abrir cuatro programas.")))
+  append(left, rv(el("p", "sub", "Los clientes de APIs responden qué devolvió el endpoint. Lo demás te toca buscarlo a mano."), 1))
+  let list = el("ol", "steps-old")
+  for (i, t) in [
+    "Mandas el request desde tu cliente de APIs.",
+    "Abres la consola de AWS, buscas el log group y filtras por hora hasta dar con la invocación.",
+    "Abres un cliente de MySQL y revisas a mano qué filas cambiaron.",
+    "Para un evento de SQS o S3, armas el JSON a mano y lo invocas desde la AWS CLI.",
+  ].enumerate() {
+    let li = rv(append(list, el("li")), i)
+    append(li, el("span", "strike", t))
+  }
+  let result = rv(el("div", "result", "En Citrus todo eso es una sola pantalla, y tus colecciones son archivos YAML que revisas en un PR."), 6)
+  let right = node("div", nil, [list, result])
+  section_block("que-es", [node("div", "split", [left, right])])
+}
+
+// ---------- Funciones ----------
+
+let FEATURES = [
+  {
+    tab: "Logs", image: "logs.png",
+    title: "Los logs de esa invocación, junto a la respuesta",
+    text: "Citrus busca la invocación en CloudWatch y trae todo lo que escribió, incluidas las líneas que no llevan el request ID. Muestra niveles y JSON expandible, y calcula duración, memoria y cold start.",
+    alt: "Pestaña Logs con las líneas de una invocación de Lambda, un log JSON expandido y la línea REPORT.",
+  },
+  {
+    tab: "Base de datos", image: "update.png",
+    title: "Qué cambió en MySQL, fila por fila",
+    text: "Filas nuevas, borradas y cada campo cambiado con su valor anterior. Por foto antes y después con una conexión de solo lectura, o leyendo el binlog.",
+    alt: "Pestaña DB con la tabla orders: el campo status pasó de pending a paid.",
+  },
+  {
+    tab: "Lambda", image: "lambda.png",
+    title: "Invoca funciones sin pasar por API Gateway",
+    text: "Corre tu handler en tu equipo con eventos reales de API Gateway, SQS, SNS, S3, EventBridge o DynamoDB, o invócalo en AWS.",
+    alt: "Una Lambda con un evento SQS, y a la derecha su duración, memoria, cold start y logs.",
+  },
+  {
+    tab: "Tests", image: "tests.png",
+    title: "Tests sobre la respuesta, los logs y la base",
+    text: "Se escriben en el mismo YAML y se generan con un clic desde la respuesta. Corre una carpeta completa: lo que una request captura, lo usa la siguiente.",
+    alt: "Pestaña Tests con assertions cumplidas sobre status, body, logs, duración de Lambda y filas insertadas.",
+  },
+  {
+    tab: "Cambios", image: "cambios.png",
+    title: "Qué cambió desde el envío anterior",
+    text: "Cada respuesta se compara con la anterior. Sirve para ver de un vistazo qué rompió tu último deploy.",
+    alt: "Comparación de dos respuestas con las líneas distintas resaltadas.",
+  },
+  {
+    tab: "Secretos", image: "secretos.png",
+    title: "Un token pegado no llega a Git",
+    text: "Al guardar, Citrus avisa si hay un JWT, una clave de AWS o un token en el archivo, y lo mueve al llavero del sistema. En el YAML queda solo una referencia.",
+    alt: "Aviso de que la request tiene un token JWT, con la opción de moverlo al llavero.",
+  },
+]
+
+let AUTO_MS = 7000
+
+fn draw_features() {
+  let viewer = rv(el("div", "viewer"), 2)
+  let tabs = append(viewer, el("div", "viewer-tabs"))
+  attr(tabs, "role", "tablist")
+  attr(tabs, "aria-label", "Funciones de Citrus")
+  let frame = append(viewer, el("div", "frame shots"))
+  let shots = []
+  let buttons = []
+  for f in FEATURES { shots.push(append(frame, image("assets/{f.image}", f.alt, "shot"))) }
+  let copy_row = append(viewer, el("div", "viewer-copy"))
+  let title = append(copy_row, el("h3", nil, FEATURES[0].title))
+  let body = append(copy_row, el("p", nil, FEATURES[0].text))
+  var current = 0
+  var auto = !reduced_motion()
+  var timer_id = 0
+
+  fn pick(i, animate = true) {
+    current = i
+    let f = FEATURES[i]
+    for (j, s) in shots.enumerate() {
+      toggle_class(s, "on", j == i)
+      attr(s, "aria-hidden", if j == i { nil } else { "true" })
+    }
+    set_text(title, f.title)
+    set_text(body, f.text)
+    if animate {
+      enter_anim(title)
+      enter_anim(body)
+    }
+    for (j, b) in buttons.enumerate() {
+      attr(b, "aria-selected", if j == i { "true" } else { "false" })
+      toggle_class(b, "running", false)
+    }
+  }
+
+  // Avanza solo hasta que la persona elige algo: desde ahí, manda ella.
+  fn schedule() {
+    timer_id += 1
+    let me = timer_id
+    if !auto { return nil }
+    toggle_class(buttons[current], "running", true)
+    after(AUTO_MS, || {
+      if me == timer_id && auto {
+        pick((current + 1) % FEATURES.len())
+        schedule()
+      }
+    })
+  }
+
+  for (i, f) in FEATURES.enumerate() {
+    let b = append(tabs, el("button", nil, f.tab))
+    attr(b, "role", "tab")
+    append(b, el("span", "tab-bar"))
+    on(b, "click", || {
+      auto = false
+      timer_id += 1
+      pick(i)
+    })
+    buttons.push(b)
+  }
+  pick(0, false)
+  on_view(frame, schedule, || {
+    timer_id += 1
+    for b in buttons { toggle_class(b, "running", false) }
+  })
+
+  section_block("funciones", [
+    rv(el("h2", nil, "Mira adentro de cada request.")),
+    rv(el("p", "sub", "Capturas reales de la app, con la demo incluida en el proyecto."), 1),
+    viewer,
+  ])
+}
+
+// ---------- Archivos ----------
+
+fn draw_files() {
+  let left = el("div", "sticky")
+  append(left, rv(el("h2", nil, "Tus colecciones son archivos.")))
+  append(left, rv(el("p", "sub", "Cada request es un YAML legible que vive en tu repositorio y se revisa en un PR. Citrus respeta tus comentarios al guardar."), 1))
+  append(left, rv(el("p", "sub", "No necesitas cuenta: nada sale de tu equipo salvo lo que tú envías."), 2))
+  let file = yaml_block("collections/orders/create-order.citrus.yaml", [
+    'name: Crear pedido',
+    'method: POST',
+    'url: "{{baseUrl}}/orders"',
+    'headers:',
+    '  Authorization: "Bearer {{token}}"',
+    'body:',
+    '  json:',
+    '    productId: 42',
+    '    quantity: 2',
+    'observe:',
+    '  logs: true',
+    '  lambda: orders-service-{{stage}}-createOrder',
+    '  db:',
+    '    connection: main',
+    '    tables: [orders, order_items]',
+    'assert:',
+    '  - status == 201',
+    '  - body.id exists',
+    '  - db.orders.inserted == 1',
+    '  - logs.errors == 0',
+    '  - lambda.duration < 500',
+    'capture:',
+    '  lastOrderId: body.id',
+  ])
+  section_block("archivos", [node("div", "split", [left, file])])
+}
+
+// ---------- Descargar ----------
+
+fn install_step(label, cmd, note = nil) {
+  let s = el("div", "install-step")
+  append(s, el("p", nil, label))
+  append(s, command(cmd))
+  if note != nil { append(s, el("small", nil, note)) }
+  s
+}
+
+fn draw_download_card() {
+  let card = rv(el("div", "dl-card"), 1)
+  append(card, el("div", "dl-kicker", "Windows 64 bits · versión {RELEASE.version}"))
+  let button = append(card, link("btn primary dl-btn", "Descargar Citrus", RELEASE.url))
+  attr(button, "download", RELEASE.file)
+  append(card, el("div", "dl-meta", "{RELEASE.file} · {RELEASE.size}"))
+
+  let warn = append(card, el("div", "dl-warn"))
+  append(warn, el("b", nil, "Windows te va a avisar. "))
+  add_text(warn, "El instalador todavía no está firmado, así que SmartScreen muestra «Windows protegió tu PC». Para seguir, elige Más información y después Ejecutar de todas formas.")
+
+  let hash = append(card, el("div", "dl-hash"))
+  append(hash, el("span", nil, "SHA-256, para comprobar la descarga"))
+  let value_row = append(hash, el("div", "code cmd"))
+  append(value_row, node("pre", nil, [el("code", nil, RELEASE.sha256)]))
+  let b = append(value_row, el("button", "copy", "Copiar"))
+  attr(b, "aria-label", "Copiar el SHA-256")
+  on(b, "click", || copy(RELEASE.sha256, b))
+  card
+}
+
+fn draw_download() {
+  let left = el("div", "sticky")
+  append(left, rv(el("h2", nil, "Descargar Citrus")))
+  if RELEASE != nil {
+    append(left, rv(el("p", "sub", "Instálalo y ábrelo. No necesitas Node, cuenta ni nada más."), 1))
+    let reqs = rv(append(left, el("ul", "reqs")), 2)
+    for r in [
+      ["Sistema", " Windows de 64 bits. Probado en Windows 11"],
+      ["Espacio", " unos 300 MB una vez instalado"],
+      ["macOS y Linux", " aún no: corre desde el código, sin probar"],
+    ] {
+      let li = append(reqs, el("li"))
+      append(li, el("b", nil, r[0]))
+      add_text(li, r[1])
+    }
+  } else {
+    append(left, rv(el("p", "sub", "Por ahora Citrus se corre desde el código."), 1))
+  }
+
+  let right = el("div", "stack")
+  if RELEASE != nil { append(right, draw_download_card()) }
+
+  let source = rv(el("div", "stack"), 2)
+  append(source, el("h3", "source-title", "Desde el código"))
+  append(source, el("p", "source-note", "Para desarrollar Citrus o probar la demo, que trae una API de ejemplo, MySQL temporal y CloudWatch simulado para verlo todo sin cuenta de AWS. Necesitas Node.js 20 o más reciente."))
+  if REPO_URL != nil {
+    append(source, install_step("1. Baja el código", "git clone {REPO_URL} citrus && cd citrus"))
+  } else {
+    let s = append(source, el("div", "install-step"))
+    append(s, el("p", nil, "1. Consigue el código"))
+    append(s, el("small", nil, "El repositorio público está por publicarse. Mientras tanto, abre una terminal en la carpeta del proyecto."))
+  }
+  append(source, install_step("2. Instala las dependencias", "npm install"))
+  append(source, install_step("3. Abre la app", "npm start"))
+  append(source, install_step("4. Opcional: levanta la demo", "npm run demo:api", "Déjala corriendo en otra terminal y elige Probar la demo en la app. La primera vez descarga MySQL."))
+  append(right, source)
+  section_block("descargar", [node("div", "split", [left, right])])
+}
+
+// ---------- Usar ----------
+
+fn flow_item(n, title, parts, extra = nil) {
+  let li = rv(el("li"), n % 3)
+  append(li, el("h3", nil, title))
+  append(li, rich("p", nil, parts))
+  if extra != nil { append(li, extra) }
+  li
+}
+
+fn draw_usage() {
+  let left = el("div", "sticky")
+  append(left, rv(el("h2", nil, "Cómo usarlo")))
+  append(left, rv(el("p", "sub", "De la instalación a tu primer request con logs."), 1))
+  let keys = rv(append(left, el("dl", "keys")), 2)
+  for k in [
+    ["Ctrl K", "buscar o ejecutar una acción"],
+    ["Ctrl Enter", "enviar"],
+    ["Ctrl S", "guardar"],
+    ["Ctrl W", "cerrar la pestaña"],
+  ] {
+    append(keys, node("dt", nil, [el("kbd", nil, k[0])]))
+    append(keys, el("dd", nil, k[1]))
+  }
+
+  let flow = el("ol", "flow")
+  append(flow, flow_item(0, "Abre o crea un workspace", ["Un workspace es una carpeta con ", ["citrus.config.yaml"], ", tus colecciones y tus entornos. Ponla en el repositorio de tu backend."]))
+  append(flow, flow_item(1, "Trae tus endpoints", ["En Importar, elige tu ", ["serverless.yml"], " o template de SAM, una colección de Postman v2 o un comando cURL. Las credenciales pasan al llavero."]))
+  append(flow, flow_item(2, "Define el entorno", ["En el icono de entornos van las variables y los secretos. Los usas como ", ['{{baseUrl}}'], ". Un entorno protegido pide confirmación antes de cualquier envío que no sea GET."]))
+  append(flow, flow_item(3, "Envía", ["Con ", ["Ctrl Enter"], " ves la respuesta, sus tiempos por fase y los tests."]))
+  append(flow, flow_item(4, "Conecta AWS para ver los logs", ["En la pestaña Observar, activa los logs e indica la función. Citrus usa tus credenciales de AWS, por perfil o por la cadena estándar, y nunca las guarda. Tu usuario necesita ", ["logs:FilterLogEvents"], "."]))
+  append(flow, flow_item(5, "Conecta MySQL para ver los cambios", ["Agrega la conexión al entorno y elige las tablas en Observar. Conviene un usuario de solo lectura. Para el modo binlog, ese usuario necesita ", ["REPLICATION SLAVE"], " y ", ["REPLICATION CLIENT"], "."], yaml_block("environments/staging.yaml", [
+    'aws:',
+    '  profile: mi-perfil',
+    '  region: us-east-1',
+    'db:',
+    '  main:',
+    '    host: staging-proxy.xxxx.rds.amazonaws.com',
+    '    database: app',
+    '    user: citrus_readonly',
+    '    passwordSecret: dbPassword',
+    '    mode: snapshot',
+  ])))
+  append(flow, flow_item(6, "Invoca una Lambda", ["Crea o importa una request de tipo Lambda, elige una plantilla de evento y pulsa Invocar. En modo Local corre tu handler en tu equipo; en modo AWS invoca la función real."]))
+  section_block("usar", [node("div", "split", [left, flow])])
+}
+
+// ---------- Seguridad ----------
+
+fn draw_security() {
+  let grid = el("div", "facts")
+  for (i, f) in [
+    ["Secretos en el llavero del sistema", "Keychain, Credential Manager o libsecret. En el YAML solo queda el nombre, y el historial no guarda headers ni bodies."],
+    ["La base solo se lee", "El modo snapshot solo ejecuta SELECT, dentro de una transacción de solo lectura. Si el usuario puede escribir, Citrus te avisa al probar la conexión."],
+    ["Pregunta antes de ejecutar código", "Correr un handler en local ejecuta código del proyecto, con las variables y secretos del entorno. Citrus pide confirmación una vez por carpeta."],
+    ["Sin telemetría", "Citrus no envía datos de uso. Solo se conecta a lo que tú le pides: tu API, tu AWS y tu base."],
+  ].enumerate() {
+    append(grid, rv(node("div", nil, [el("h3", nil, f[0]), el("p", nil, f[1])]), i))
+  }
+  section_block("seguridad", [rv(el("h2", nil, "Hecho para repositorios compartidos.")), grid])
+}
+
+// ---------- Estado ----------
+
+fn draw_status() {
+  let left = el("div", "sticky")
+  append(left, rv(el("h2", nil, "En qué va")))
+  append(left, rv(el("p", "sub", "Citrus está en desarrollo. Esto funciona hoy y esto falta."), 1))
+  let list = el("ul", "status-list")
+  for (i, s) in [
+    ["done", "Listo", "Cliente HTTP", "JSON, form, multipart, Bearer, Basic, API Key, entornos, secretos, historial e importación de cURL y Postman."],
+    ["done", "Listo", "Serverless", "Importa serverless.yml y SAM. Invoca Lambda en local y en AWS con plantillas de eventos."],
+    ["done", "Listo", "Logs y métricas", "CloudWatch por invocación, duración, memoria, cold start y X-Ray."],
+    ["done", "Listo", "Base de datos", "Diff de MySQL por snapshot y binlog, con tests sobre las filas."],
+    ["next", "Falta", "CLI y CI", "citrus run y reportes JUnit. Los flujos ya corren desde la app."],
+    ["next", "Falta", "Servidor MCP", "Para que un agente de IA pruebe su propio cambio."],
+    ["next", "Falta", "Otros formatos", "GraphQL, SigV4, OAuth 2.0, scripts, CDK, OpenAPI e Insomnia."],
+    ["next", "Falta", "macOS y Linux", "Instaladores y pruebas en esos sistemas."],
+  ].enumerate() {
+    let li = rv(append(list, el("li")), i % 4)
+    append(li, el("span", "badge {s[0]}", s[1]))
+    append(li, node("div", nil, [el("b", nil, s[2]), el("p", nil, s[3])]))
+  }
+  append(left, rv(el("p", "sub", "Probado contra MySQL real. CloudWatch y Lambda en AWS solo se han probado contra un emulador, y RDS o Aurora aún no."), 2))
+  section_block("estado", [node("div", "split", [left, list])])
+}
+
+// ---------- Pie ----------
+
+fn draw_footer() {
+  let foot = el("footer", "foot")
+  let w = append(foot, el("div", "wrap foot-in"))
+  let tag = append(w, el("span"))
+  add_text(tag, "Citrus. Licencia MIT.")
+  let made = append(w, el("span"))
+  add_text(made, "Esta página y la interfaz de la app están escritas en ")
+  let a = append(made, link(nil, "Tangerine", "https://www.npmjs.com/package/tangerine-lang"))
+  attr(a, "rel", "noopener")
+  add_text(made, ".")
+  foot
+}
+
+// ---------- Página ----------
+
+append(root, link("skip", "Saltar al contenido", "#que-es"))
+append(root, draw_nav())
+let main_el = append(root, el("main"))
+append(main_el, draw_hero())
+append(main_el, draw_what())
+append(main_el, draw_features())
+append(main_el, draw_files())
+append(main_el, draw_download())
+append(main_el, draw_usage())
+append(main_el, draw_security())
+append(main_el, draw_status())
+append(root, draw_footer())
+reveal_all()

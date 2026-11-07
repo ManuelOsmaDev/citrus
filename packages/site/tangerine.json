@@ -1,0 +1,10 @@
+{
+  "entry": "src/main.tng",
+  "out": "dist/index.html",
+  "title": "Citrus: el cliente de APIs para backends serverless",
+  "lang": "es",
+  "styles": ["src/styles.css"],
+  "scripts": ["src/motion.js"],
+  "head": "<meta name=\"description\" content=\"Manda un request y ve en la misma pantalla la respuesta, los logs de CloudWatch, el cold start y las filas que cambió en MySQL. Colecciones en YAML, sin cuenta.\"><meta property=\"og:title\" content=\"Citrus\"><meta property=\"og:description\" content=\"Lo que tu endpoint respondió, y lo que pasó adentro.\"><meta property=\"og:image\" content=\"assets/base-de-datos.png\"><meta name=\"color-scheme\" content=\"dark light\"><link rel=\"icon\" href=\"assets/logo.svg\" type=\"image/svg+xml\">",
+  "runtime": "inline"
+}

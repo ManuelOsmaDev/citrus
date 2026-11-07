@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/tangerine-lang/bin/tangerine.js", "serve", "packages/site/dist", "-p", "4173"],
+      "port": 4173
+    }
+  ]
+}
