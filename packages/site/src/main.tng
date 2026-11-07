@@ -510,11 +510,118 @@ fn install_step(label, cmd, note = nil) {
   s
 }
 
+// ---------- Encuesta tras descargar ----------
+// Tres preguntas opcionales. Las respuestas van al Google Form siempre en español.
+
+let ES = ui_lang() == "es"
+fn tr(es, en) { if ES { es } else { en } }
+
+let AREAS = [
+  ["Backend", "Backend"], ["Frontend", "Frontend"], ["Full stack", "Full stack"], ["Móvil", "Mobile"],
+  ["QA / Testing", "QA / Testing"], ["DevOps / Cloud", "DevOps / Cloud"], ["Estudiante", "Student"], ["Otro", "Other"],
+]
+let USES = [
+  ["HTTP / APIs", "HTTP / APIs"], ["MySQL", "MySQL"], ["AWS Lambda", "AWS Lambda"], ["Todo un poco", "A bit of everything"],
+]
+
+// Botones de los que solo uno queda marcado. Devuelve una función que da el valor elegido (en español).
+fn choices(parent, options) {
+  var chosen = nil
+  let row = append(parent, el("div", "chips"))
+  attr(row, "role", "radiogroup")
+  var buttons = []
+  for o in options {
+    let b = append(row, el("button", "chip", tr(o[0], o[1])))
+    attr(b, "role", "radio")
+    attr(b, "aria-checked", "false")
+    buttons.push(b)
+    on(b, "click", || {
+      chosen = if chosen == o[0] { nil } else { o[0] }
+      for x in buttons {
+        let on_now = chosen != nil && x == b
+        toggle_class(x, "on", on_now)
+        attr(x, "aria-checked", if on_now { "true" } else { "false" })
+      }
+    })
+  }
+  || chosen
+}
+
+fn survey_field(parent, label) {
+  let f = append(parent, el("div", "sv-field"))
+  append(f, el("span", "sv-label", label))
+  f
+}
+
+var survey_dialog = nil
+
+fn open_survey() {
+  if load("citrus-survey") != nil { return nil }
+  if survey_dialog != nil { open_modal(survey_dialog); return nil }
+
+  let d = append(root, el("dialog", "survey"))
+  attr(d, "aria-labelledby", "sv-title")
+  survey_dialog = d
+  let close_btn = append(d, el("button", "sv-close", "×"))
+  attr(close_btn, "aria-label", tr("Cerrar", "Close"))
+
+  let body = append(d, el("div", "sv-body"))
+  let title = append(body, el("h3", nil, tr("Tu descarga ya empezó", "Your download has started")))
+  attr(title, "id", "sv-title")
+  append(body, el("p", "sv-sub", tr("¿Nos cuentas un poco de ti? Son tres preguntas y todas son opcionales.", "Tell us a bit about yourself? Three questions, all optional.")))
+
+  let list = countries()
+  let country_f = survey_field(body, tr("¿De qué país eres?", "Where are you from?"))
+  let country = append(country_f, el("input", "sv-input"))
+  attr(country, "list", "sv-countries")
+  attr(country, "autocomplete", "country-name")
+  attr(country, "placeholder", tr("Escribe para buscar", "Type to search"))
+  let guess = guess_country()
+  if guess != nil { set_value(country, guess) }
+  let dl = append(country_f, el("datalist"))
+  attr(dl, "id", "sv-countries")
+  for c in list {
+    let o = append(dl, el("option"))
+    attr(o, "value", c[0])
+  }
+
+  let area = choices(survey_field(body, tr("Área de desarrollo", "Development area")), AREAS)
+  let use = choices(survey_field(body, tr("¿Qué vas a usar más?", "What will you use most?")), USES)
+
+  let actions = append(body, el("div", "sv-actions"))
+  let later = append(actions, el("button", "btn", tr("Ahora no", "Not now")))
+  let send = append(actions, el("button", "btn primary", tr("Enviar", "Send")))
+
+  fn done() {
+    save("citrus-survey", "1")
+    close_modal(d)
+  }
+  on(close_btn, "click", done)
+  on(later, "click", done)
+  on(send, "click", || {
+    let typed = value(country).trim()
+    var country_es = if typed == "" { nil } else { typed }
+    for c in list {
+      if c[0].lower() == typed.lower() { country_es = c[1] }
+    }
+    send_survey(country_es, area(), use())
+    save("citrus-survey", "1")
+    clear(body)
+    toggle_class(d, "sent", true)
+    append(body, el("div", "sv-thanks-mark", "🍊"))
+    append(body, el("h3", nil, tr("¡Gracias!", "Thank you!")))
+    append(body, el("p", "sv-sub", tr("Que disfrutes Citrus.", "Enjoy Citrus.")))
+    after(1800, || close_modal(d))
+  })
+  open_modal(d)
+}
+
 fn draw_download_card() {
   let card = rv(el("div", "dl-card"), 1)
   append(card, el("div", "dl-kicker", "Windows 64 bits · versión {RELEASE.version}"))
   let button = append(card, link("btn primary dl-btn", "Descargar Citrus", RELEASE.url))
   attr(button, "download", RELEASE.file)
+  on(button, "click", || after(600, open_survey))
   append(card, el("div", "dl-meta", "{RELEASE.file} · {RELEASE.size}"))
 
   let warn = append(card, el("div", "dl-warn"))

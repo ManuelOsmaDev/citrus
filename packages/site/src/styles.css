@@ -266,3 +266,29 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--border-st
 /* ---------- Pie ---------- */
 .foot { border-top: 1px solid var(--border); padding-block: 36px; color: var(--text-3); font-size: 14px; }
 .foot-in { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* ---------- Encuesta tras descargar ---------- */
+.survey { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: hidden auto; }
+.survey *, .survey *::before { box-sizing: border-box; }
+.survey::backdrop { background: #0806049e; backdrop-filter: blur(3px); }
+.survey[open] { animation: sv-in .32s var(--ease-out); }
+@keyframes sv-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .survey[open] { animation: none; } }
+.sv-body { display: flex; flex-direction: column; gap: 18px; padding: 28px 26px 24px; }
+.sv-body h3 { margin: 0; font: 650 21px/1.25 var(--sans); letter-spacing: -.01em; }
+.sv-sub { margin: -10px 0 0; color: var(--text-2); font-size: 15px; line-height: 1.5; }
+.sv-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); font-size: 22px; line-height: 1; cursor: pointer; }
+.sv-close:hover { background: var(--surface-2); color: var(--text); }
+.sv-field { display: flex; flex-direction: column; gap: 8px; }
+.sv-label { font: 560 13px var(--sans); color: var(--text-2); }
+.sv-input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--bg); color: var(--text); font: 15px var(--sans); }
+.sv-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 36px; padding: 0 13px; border: 1px solid var(--border-strong); border-radius: 999px; background: transparent; color: var(--text-2); font: 520 14px var(--sans); cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.chip:hover { background: var(--surface-2); color: var(--text); }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.chip:focus-visible, .sv-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sv-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.survey.sent .sv-body { align-items: center; text-align: center; padding: 40px 26px; gap: 10px; }
+.survey.sent .sv-sub { margin: 0; }
+.sv-thanks-mark { font-size: 40px; }
