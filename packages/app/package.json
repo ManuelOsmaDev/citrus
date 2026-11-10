@@ -1,6 +1,6 @@
 {
   "name": "@citrus/app",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Citrus: el cliente de APIs para backends serverless.",
   "license": "MIT",
   "type": "module",
@@ -17,13 +17,14 @@
     "@citrus/core": "0.1.0",
     "@fontsource-variable/geist": "^5.1.0",
     "@fontsource-variable/geist-mono": "^5.1.0",
+    "electron-updater": "^6.8.11",
     "monaco-editor": "0.52.2"
   },
   "devDependencies": {
     "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "playwright-core": "^1.49.0",
-    "tangerine-lang": "3.1.0",
-    "electron-builder": "^25.1.8"
+    "tangerine-lang": "^5.2.2"
   },
   "author": "Los autores de Citrus",
   "build": {
@@ -63,6 +64,13 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Citrus"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ManuelOsmaDev",
+        "repo": "citrus"
+      }
+    ]
   }
 }

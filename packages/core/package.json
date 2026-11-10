@@ -5,8 +5,10 @@
   "license": "MIT",
   "type": "module",
   "exports": "./src/index.js",
-  "scripts": { "test": "node --test test/core.test.js test/phase2.test.js test/proxy.test.js",
-    "test:db": "node --test test/db.test.js" },
+  "scripts": {
+    "test": "node --test test/core.test.js test/phase2.test.js test/proxy.test.js test/scripts.test.js",
+    "test:db": "node --test test/db.test.js"
+  },
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "^3.700.0",
     "@aws-sdk/client-lambda": "^3.700.0",
@@ -14,8 +16,12 @@
     "@napi-rs/keyring": "^1.1.0",
     "@vlasky/zongji": "^0.9.0",
     "mysql2": "^3.11.0",
+    "tangerine-lang": "^5.2.2",
     "undici": "^7.0.0",
     "yaml": "^2.6.0"
   },
-  "devDependencies": { "mysql-memory-server": "^1.18.0", "selfsigned": "^2.4.1" }
+  "devDependencies": {
+    "mysql-memory-server": "^1.18.0",
+    "selfsigned": "^2.4.1"
+  }
 }

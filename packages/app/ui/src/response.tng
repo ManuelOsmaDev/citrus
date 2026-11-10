@@ -467,6 +467,8 @@ fn draw_result(host, tab) {
     [["body", "Body"], ["logs", "Logs"], ["db", "DB"], ["tests", "Tests"], ["diff", "Cambios"], ["headers", "Headers"], ["timings", "Tiempos"], ["sent", "Enviado"]]
   }
 
+  if res.scripts != nil { items.push(["scripts", "Scripts"]) }
+
   fn select(id) {
     tab.res_tab = id
     draw_tabs()
@@ -476,6 +478,7 @@ fn draw_result(host, tab) {
       "body" => draw_body(area, res),
       "headers" => draw_table(area, res.headers),
       "timings" => draw_timings(area, res),
+      "scripts" => draw_script_logs(area, res),
       "sent" => draw_sent(area, res),
       "tests" => draw_tests(area, res),
       "diff" => draw_diff(area, tab, res),
@@ -493,6 +496,7 @@ fn draw_result(host, tab) {
       attr(b, "data-restab", item[0])
       if item[0] == "headers" { append(b, span("count", res.headers.len())) }
       if item[0] == "tests" { tests_badge(b, res) }
+      if item[0] == "scripts" && res.scripts.any(|l| l.error == true) { append(b, span("count bad", "!")) }
       if item[0] == "db" && res.db != nil {
         if res.db.error != nil { append(b, span("count bad", "!")) } else if res.db.changes > 0 { append(b, span("count", res.db.changes)) }
       }
@@ -555,4 +559,14 @@ export fn draw_response(host) {
   append(hint, el("span", "kbd", "Ctrl"))
   add_text(hint, " + ")
   append(hint, el("span", "kbd", "Enter"))
+}
+
+fn draw_script_logs(host, res) {
+  let wrap = append(host, el("div", "padded script-logs"))
+  for line in res.scripts {
+    let row = append(wrap, el("div", "script-line"))
+    toggle_class(row, "bad", line.error == true)
+    append(row, span("script-phase", if line.phase == "before" { "antes" } else { "después" }))
+    append(row, el("code", nil, line.text))
+  }
 }

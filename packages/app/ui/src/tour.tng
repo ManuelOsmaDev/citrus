@@ -1,6 +1,7 @@
 // Guía de primer uso: qué es Citrus y un recorrido con una API de ejemplo.
 import { active_tab, api, app, enter_workspace, open_request, send_active } from "./state.tng"
 import { btn, span } from "./widgets.tng"
+import { open_guide } from "./guia.tng"
 
 let SLIDES = [
   {
@@ -161,9 +162,13 @@ fn show_end() {
   attr(card, "aria-label", "Guía terminada")
   append(card, logo(34))
   append(card, el("h3", nil, "Ya sabes lo básico"))
-  append(card, el("p", nil, "Puedes seguir probando este ejemplo o crear tu propio workspace. La guía sigue en Ctrl+K."))
+  append(card, el("p", nil, "Puedes seguir probando este ejemplo o crear tu propio workspace. Para AWS, Lambda, logs y MySQL, abre la guía completa."))
   let foot = append(card, el("div", "tour-foot"))
   append(foot, btn("", "Seguir explorando", close_tour))
+  append(foot, btn("ghost", "Guía completa", || {
+    close_tour()
+    open_guide()
+  }, "file"))
   append(foot, el("div", "grow"))
   append(foot, btn("primary", "Crear mi workspace", || {
     close_tour()

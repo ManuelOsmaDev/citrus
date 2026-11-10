@@ -132,6 +132,7 @@ fn sub_count(tab, id) {
     "params" => params_of(tab).filter(|r| r.enabled != false && !r.key.is_empty()).len(),
     "headers" => tab.model.headers.filter(|r| r.enabled != false && !r.key.is_empty()).len(),
     "tests" => tab.model.assert.filter(|l| !l.trim().is_empty()).len(),
+    "scripts" => [tab.model.scripts?.before ?? "", tab.model.scripts?.after ?? ""].filter(|s| !s.trim().is_empty()).len(),
     _ => 0,
   }
 }
@@ -143,7 +144,7 @@ fn draw_subtabs(tab) {
   let items = if is_lambda {
     [["event", "Evento"], ["config", "Configuración"], ["observe", "Observar"], ["tests", "Tests"], ["yaml", "YAML"]]
   } else {
-    [["params", "Params"], ["headers", "Headers"], ["body", "Body"], ["auth", "Auth"], ["observe", "Observar"], ["tests", "Tests"], ["yaml", "YAML"]]
+    [["params", "Params"], ["headers", "Headers"], ["body", "Body"], ["auth", "Auth"], ["scripts", "Scripts"], ["observe", "Observar"], ["tests", "Tests"], ["yaml", "YAML"]]
   }
   for item in items {
     let b = append(subtabs_host, el("button", "subtab", item[1]))
@@ -322,11 +323,95 @@ fn draw_sub(tab) {
     "auth" => draw_auth(sub_body, tab),
     "yaml" => draw_yaml(sub_body, tab),
     "tests" => draw_tests(sub_body, tab),
+    "scripts" => draw_scripts(sub_body, tab),
     "observe" => draw_observe(sub_body, tab),
     "event" => draw_event(sub_body, tab),
     "config" => draw_config(sub_body, tab),
     _ => nil,
   }
+}
+
+// ---------- Scripts ----------
+
+let SCRIPT_SNIPPETS = {
+  before: [
+    ["Usar un token guardado", 'req.headers["Authorization"] = "Bearer " + env.get("token")'],
+    ["Iniciar sesión y usar el token", '// Pide el token y lo pone en la request
+let login = await http.post(\'{{baseUrl}}/login\', { usuario: "ana", clave: env.get("clave") })
+env.set("token", login.json.token)
+req.headers["Authorization"] = "Bearer " + login.json.token'],
+    ["Firmar el body", 'req.headers["X-Signature"] = hmac_sha256(env.get("secreto"), req.body ?? "")'],
+    ["Agregar fecha e id", 'req.headers["X-Request-Id"] = uuid()
+req.headers["X-Timestamp"] = timestamp()'],
+  ],
+  after: [
+    ["Guardar el token", '// Queda disponible como {{token}} en las siguientes requests
+env.set("token", res.json.token)'],
+    ["Ver el resultado", 'log("Estado:", res.status, "en", res.time, "ms")'],
+    ["Avisar si falló", 'if res.status >= 400 {
+  log("La API respondió con error:", res.text)
+}'],
+  ],
+}
+
+fn draw_scripts(host, tab) {
+  let m = tab.model
+  if m.scripts == nil { m.scripts = { before: "", after: "" } }
+  if tab.script_phase == nil { tab.script_phase = "before" }
+  let wrap = append(host, el("div", "scripts"))
+  let head = append(wrap, el("div", "scripts-head"))
+  let phases = append(head, el("div", "scripts-phases"))
+  let chips = append(head, el("div", "scripts-chips"))
+  var buttons = []
+
+  fn add_snippet(code) {
+    let phase = tab.script_phase
+    let current = m.scripts[phase]
+    let next = if current.trim().is_empty() { code } else { current.trim() + "\n\n" + code }
+    m.scripts[phase] = next
+    editor_set(editor, next)
+    touch(tab)
+    draw_subtabs(tab)
+  }
+
+  fn draw_chips() {
+    clear(chips)
+    for item in SCRIPT_SNIPPETS[tab.script_phase] {
+      let b = append(chips, btn("small", item[0], || add_snippet(item[1]), "plus"))
+      attr(b, "data-script-snippet", item[0])
+    }
+  }
+
+  for option in [["before", "Antes de enviar"], ["after", "Después de recibir"]] {
+    let b = append(phases, el("button", "subtab", option[1]))
+    attr(b, "data-script-phase", option[0])
+    toggle_class(b, "on", tab.script_phase == option[0])
+    buttons.push([option[0], b])
+    on(b, "click", || {
+      tab.script_phase = option[0]
+      for pair in buttons { toggle_class(pair[1], "on", pair[0] == tab.script_phase) }
+      editor_set(editor, m.scripts[tab.script_phase])
+      draw_chips()
+    })
+  }
+  draw_chips()
+
+  let box_el = append(wrap, el("div", "editor"))
+  editor = editor_create(box_el, { value: m.scripts[tab.script_phase], language: "javascript" }, |text| {
+    m.scripts[tab.script_phase] = text
+    touch(tab)
+    draw_subtabs(tab)
+  })
+
+  let hint = append(wrap, el("div", "hint"))
+  add_text(hint, "Se escriben en Tangerine y corren aislados, sin acceso a tus archivos. Tienes ")
+  for (i, name) in ["req.headers", "req.body", "req.url", "res.json", "res.status", "env.get", "env.set", "http.post", "log", "uuid", "timestamp", "sha256", "hmac_sha256", "base64"].enumerate() {
+    if i > 0 { add_text(hint, ", ") }
+    append(hint, el("code", nil, name))
+  }
+  add_text(hint, ". Usa comillas simples para escribir ")
+  append(hint, el("code", nil, '{{variables}}'))
+  add_text(hint, ".")
 }
 
 // ---------- Tests y capturas ----------

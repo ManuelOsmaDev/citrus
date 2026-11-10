@@ -524,3 +524,43 @@ input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var
 @keyframes tour-fade { from { opacity: 0; } }
 @keyframes tour-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .tour-layer, .tour-panel, .tour-card, .tour-content { animation: none; } .tour-spot, .tour-dot { transition: none; } }
+
+/* ---------- Scripts ---------- */
+.scripts { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.scripts-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; flex: none; }
+.scripts-phases, .scripts-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.scripts .hint { flex: none; padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+.script-logs { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+.script-line { display: flex; align-items: baseline; gap: 10px; }
+.script-line code { white-space: pre-wrap; word-break: break-word; }
+.script-line.bad code { color: var(--err); }
+.script-phase { flex: none; color: var(--text-3); font-size: 11.5px; }
+
+/* ---------- Actualización obligatoria ---------- */
+.update-lock { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 24px; background: var(--bg); animation: tour-fade .25s ease; }
+.update-card { gap: 12px; }
+.update-card h2 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.025em; }
+.update-card .tour-foot { margin-top: 8px; }
+.update-progress { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.update-bar { flex: 1; height: 7px; overflow: hidden; border-radius: 99px; background: var(--surface-3); }
+.update-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width .2s ease; }
+.update-percent { min-width: 38px; color: var(--text-2); font: 500 12px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.update-detail { margin: 0; color: var(--text-3); font: 11.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+
+/* ---------- Guía completa ---------- */
+.guide.modal-body { flex-direction: row; gap: 18px; height: min(70vh, 580px); overflow: hidden; padding-bottom: 18px; }
+.guide-nav { display: flex; flex-direction: column; gap: 2px; flex: none; width: 188px; overflow: auto; }
+.guide-link { padding: 7px 10px; border: 0; border-radius: var(--r-m); background: none; color: var(--text-2); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.guide-link:hover { background: var(--surface-3); color: var(--text); }
+.guide-link.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.guide-frame { flex: 1; min-width: 0; display: flex; }
+.guide-page { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; padding-right: 4px; }
+.guide-page h3 { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+.guide-page p { font-size: 13.5px; }
+.guide-page p code { padding: 1px 4px; border-radius: 4px; background: var(--surface-3); color: var(--text); font: 12px var(--mono); }
+.guide-code { position: relative; flex: none; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--surface-2); }
+.guide-code pre { margin: 0; padding: 12px 14px; overflow: auto; font: 12px/1.6 var(--mono); }
+.guide-copy { position: absolute; top: 7px; right: 7px; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface); color: var(--text-2); font: inherit; font-size: 11.5px; cursor: pointer; }
+.guide-copy:hover { color: var(--text); }
+.guide-page .tour-foot { margin-top: auto; padding-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .update-lock { animation: none; } .update-fill { transition: none; } }

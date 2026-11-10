@@ -1,0 +1,198 @@
+// Guía completa: cómo se usa cada parte de Citrus, con ejemplos para copiar.
+import { btn, modal, span } from "./widgets.tng"
+
+let CAPITULOS = [
+  {
+    titulo: "Requests y variables",
+    texto: [
+      'Cada request es un archivo `.citrus.yaml` dentro de `collections/`. Elige método y URL, y completa Params, Headers, Body y Auth. Envía con el botón Enviar o con `Ctrl+Enter`.',
+      'Escribe `{{nombre}}` en cualquier parte para usar una variable del entorno activo. Debajo de la URL ves cómo queda ya resuelta.',
+    ],
+    codigo: 'name: Crear pedido
+method: POST
+url: "{{baseUrl}}/orders"
+headers:
+  Authorization: "Bearer {{token}}"
+body:
+  json:
+    productId: 42',
+  },
+  {
+    titulo: "Entornos y secretos",
+    texto: [
+      'Un entorno es un archivo en `environments/` con sus variables: local, staging, producción. Cámbialo arriba a la derecha y edítalo con el ícono de ajustes que tiene al lado.',
+      'Los secretos, como tokens o contraseñas, se guardan en el llavero de Windows y nunca en tus archivos. En el YAML solo va el nombre del secreto.',
+      'Con `protected: true`, Citrus pide confirmación antes de enviar cualquier request que no sea GET.',
+    ],
+    codigo: 'name: staging
+protected: true
+extends: dev
+variables:
+  baseUrl: https://staging.miapi.com
+secrets:
+  - token',
+  },
+  {
+    titulo: "Bearer token y scripts",
+    texto: [
+      'Para un token fijo, usa la pestaña Auth o un header con `{{token}}`. Para pedirlo o calcularlo en cada envío, usa la pestaña Scripts, como en Postman.',
+      'Antes de enviar tienes `req` para cambiar la request, y después de recibir tienes `res` con la respuesta. `env.set` guarda un valor que puedes usar como `{{nombre}}` mientras la app siga abierta.',
+      'Se escriben en Tangerine y corren aislados, sin acceso a tus archivos. Escribe `await` al inicio de la línea o justo después de `let x =`. Para poner `{{variables}}` dentro de un texto usa comillas simples.',
+    ],
+    codigo: '// Antes de enviar
+let login = await http.post(\'{{baseUrl}}/login\', { usuario: "ana", clave: env.get("clave") })
+env.set("token", login.json.token)
+req.headers["Authorization"] = "Bearer " + login.json.token
+
+// Firmar el body
+req.headers["X-Signature"] = hmac_sha256(env.get("secreto"), req.body ?? "")
+
+// Después de recibir
+env.set("pedido", res.json.id)
+log("Estado:", res.status)',
+  },
+  {
+    titulo: "Tests y capturas",
+    texto: [
+      'En la pestaña Tests escribe una condición por línea. Citrus las revisa en cada envío, y el botón Generar desde la respuesta te las propone.',
+      'Las capturas guardan un valor de la respuesta como variable. Así, correr una carpeta completa puede crear un pedido y luego consultarlo.',
+    ],
+    codigo: 'assert:
+  - status == 201
+  - body.id exists
+  - time < 500
+  - logs.errors == 0
+  - db.orders.inserted == 1
+capture:
+  lastOrderId: body.id',
+  },
+  {
+    titulo: "Conectar AWS",
+    texto: [
+      'Citrus usa tus credenciales de AWS de siempre. Si ya funciona `aws sts get-caller-identity` en tu terminal, no hay que configurar nada más. No te pide cuenta ni guarda tus llaves.',
+      'Para elegir un perfil y una región, agrégalos en el archivo del entorno. Si no pones perfil, usa la cadena normal de AWS: variables de entorno, perfil por defecto o rol.',
+      'Tu usuario necesita `lambda:InvokeFunction` para invocar funciones y `logs:FilterLogEvents` para leer los logs.',
+    ],
+    codigo: '# En la terminal, una sola vez
+aws configure --profile mi-perfil
+
+# environments/staging.yaml
+aws:
+  profile: mi-perfil
+  region: us-east-1',
+  },
+  {
+    titulo: "Invocar una Lambda",
+    texto: [
+      'Crea una request de tipo Lambda. En modo `remote` invoca la función real en AWS. En modo `local` corre tu handler en tu PC, con las variables del entorno.',
+      'En la pestaña Evento escribes el evento o eliges una plantilla real: API Gateway, SQS, SNS, S3, EventBridge o DynamoDB. La respuesta muestra el payload, los logs, la duración, la memoria y el cold start.',
+      'El modo local ejecuta código del proyecto, por eso Citrus pregunta una vez por carpeta antes de hacerlo. Da tu confianza solo a proyectos que conozcas.',
+    ],
+    codigo: 'name: Procesar pago
+type: lambda
+function: orders-service-{{stage}}-pay
+mode: remote
+
+# Para correrla en tu PC:
+# mode: local
+# handler: src/handlers.pagar
+# cwd: .',
+  },
+  {
+    titulo: "Logs de CloudWatch",
+    texto: [
+      'Esto es lo que más distingue a Citrus. En la pestaña Observar de una request HTTP activa los logs y escribe el nombre de tu Lambda.',
+      'Después de enviar, Citrus busca esa invocación en CloudWatch y muestra lo que escribió tu función, la duración, la memoria y el cold start, junto a la respuesta.',
+      'Encuentra la invocación con el id que trae la respuesta. Si no hay id y corrieron varias invocaciones en ese momento, te deja elegir cuál es.',
+    ],
+    codigo: 'observe:
+  logs: true
+  lambda: orders-service-{{stage}}-createOrder
+assert:
+  - logs.errors == 0
+  - lambda.duration < 500',
+  },
+  {
+    titulo: "Qué cambió en MySQL",
+    texto: [
+      'Citrus te muestra las filas nuevas, las borradas y cada campo que cambió por culpa de tu request. Define la conexión en el entorno y elige las tablas en Observar.',
+      'El modo `snapshot` compara una foto de antes y otra de después. Solo hace SELECT y sirve en cualquier MySQL, con tablas de hasta 5000 filas o filtradas con `where`.',
+      'El modo `binlog` lee los cambios reales. Necesita `binlog_format = ROW` y un usuario con `REPLICATION SLAVE` y `REPLICATION CLIENT`. Fuera de tu PC la conexión exige TLS. Para un túnel SSH, ábrelo antes con `ssh -L`.',
+    ],
+    codigo: '# environments/dev.yaml
+db:
+  main:
+    host: 127.0.0.1
+    port: 3307
+    database: app
+    user: root
+    passwordSecret: dbPassword
+    mode: snapshot
+
+# En la request
+observe:
+  db:
+    connection: main
+    tables: [orders, order_items]',
+  },
+  {
+    titulo: "Importar lo que ya tienes",
+    texto: [
+      'El botón Importar, arriba a la derecha, trae tus endpoints desde un comando cURL, una colección de Postman, un `serverless.yml` o un template de SAM. Con `serverless.yml` y SAM crea también las Lambdas y el entorno.',
+      'Al guardar, Citrus avisa si encuentra un JWT, una clave de AWS o un token escrito en el archivo, y te ofrece moverlo al llavero.',
+    ],
+    codigo: nil,
+  },
+  {
+    titulo: "Atajos y red de empresa",
+    texto: [
+      '`Ctrl+K` busca requests y acciones, y desde ahí puedes correr toda la colección. `Ctrl+Enter` envía, `Ctrl+S` guarda y `Ctrl+W` cierra la pestaña.',
+      'Citrus usa el proxy de Windows y confía en los certificados de Windows. Si tu empresa usa un proxy que Windows no conoce, configúralo con `Ctrl+K` y Configurar proxy. Las conexiones de AWS y MySQL todavía no pasan por el proxy.',
+    ],
+    codigo: nil,
+  },
+]
+
+fn con_codigo(host, texto) {
+  for (i, parte) in texto.split("`").enumerate() {
+    if i.is_odd() { append(host, el("code", nil, parte)) } else { add_text(host, parte) }
+  }
+}
+
+export fn open_guide() {
+  let body = el("div", "guide")
+  let lista = append(body, el("nav", "guide-nav"))
+  attr(lista, "aria-label", "Capítulos")
+  let marco = append(body, el("div", "guide-frame"))
+  var botones = []
+
+  fn mostrar(i) {
+    for (n, b) in botones.enumerate() { toggle_class(b, "on", n == i) }
+    clear(marco)
+    // Una página nueva cada vez, para empezar a leer desde arriba.
+    let pagina = append(marco, el("div", "guide-page"))
+    let c = CAPITULOS[i]
+    append(pagina, span("tour-kicker", "Capítulo {i + 1} de {CAPITULOS.len()}"))
+    append(pagina, el("h3", nil, c.titulo))
+    for parrafo in c.texto { con_codigo(append(pagina, el("p")), parrafo) }
+    if c.codigo != nil {
+      let caja = append(pagina, el("div", "guide-code"))
+      let copiar = append(caja, el("button", "guide-copy", "Copiar"))
+      on(copiar, "click", || copy(c.codigo, copiar))
+      append(caja, el("pre", nil, c.codigo))
+    }
+    let pie = append(pagina, el("div", "tour-foot"))
+    if i > 0 { append(pie, btn("", "Anterior", || mostrar(i - 1))) }
+    append(pie, el("div", "grow"))
+    if i < CAPITULOS.len() - 1 { append(pie, btn("primary", "Siguiente", || mostrar(i + 1))) }
+  }
+
+  for (i, c) in CAPITULOS.enumerate() {
+    let b = append(lista, el("button", "guide-link", c.titulo))
+    attr(b, "data-capitulo", c.titulo)
+    on(b, "click", || mostrar(i))
+    botones.push(b)
+  }
+  modal("Guía completa de Citrus", body, [], { wide: true })
+  mostrar(0)
+}

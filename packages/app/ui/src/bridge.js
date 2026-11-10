@@ -137,6 +137,17 @@
           );
           return null;
         },
+        on_update(f) {
+          window.citrusBridge.onUpdate((info) => invoke(f, [Tng.fromJS(info)]));
+          return null;
+        },
+        // Deja fuera del teclado y del ratón todo lo que no sea esta capa.
+        lock_page(layer) {
+          for (const node of document.body.children) {
+            if (node !== layer) node.inert = true;
+          }
+          return null;
+        },
         on_window_focus(f) {
           window.citrusBridge.onFocus(() => invoke(f));
           return null;

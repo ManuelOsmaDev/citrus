@@ -6,5 +6,8 @@ contextBridge.exposeInMainWorld("citrusBridge", {
   onFocus: (callback) => {
     ipcRenderer.on("citrus:focus", () => callback());
   },
+  onUpdate: (callback) => {
+    ipcRenderer.on("citrus:update", (_event, info) => callback(info));
+  },
   platform: process.platform,
 });

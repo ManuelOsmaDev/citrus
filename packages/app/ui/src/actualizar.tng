@@ -1,0 +1,133 @@
+// Pantalla de actualización obligatoria: tapa la app hasta instalar la versión nueva.
+import { api, app } from "./state.tng"
+import { btn, span } from "./widgets.tng"
+
+var card = nil
+var info = nil
+var fill = nil
+var label = nil
+var busy = nil
+var problem = nil
+var pending = []
+
+fn progress_set(percent) {
+  set_style(fill, "width", "{percent}%")
+  set_text(label, "{percent}%")
+}
+
+fn draw_message(title, text) {
+  append(card, logo(34))
+  append(card, el("h2", nil, title))
+  append(card, el("p", "tour-text", text))
+}
+
+fn draw_problem() {
+  let tab = problem.tab
+  if problem.blocked {
+    draw_message("Revisa esta request antes de actualizar", "«{tab.model.name}» tiene credenciales escritas a mano y este archivo puede ir a Git.")
+  } else {
+    draw_message("No se pudo guardar una request", "«{tab.model.name}»: {problem.message}")
+  }
+  let foot = append(card, el("div", "tour-foot"))
+  append(foot, btn("ghost", "Descartar sus cambios", || skip_tab()))
+  append(foot, el("div", "grow"))
+  if problem.blocked {
+    append(foot, btn("danger", "Guardar igual", || save_next("force")))
+    append(foot, btn("primary", "Mover al llavero y guardar", || save_next("move"), "key"))
+  } else {
+    append(foot, btn("primary", "Reintentar", || save_next()))
+  }
+}
+
+fn draw() {
+  clear(card)
+  fill = nil
+  if busy != nil {
+    draw_message(busy, "Citrus se va a cerrar, se instala y vuelve a abrirse sola.")
+  } else if problem != nil {
+    draw_problem()
+  } else if info.state == "downloading" {
+    draw_message("Hay una versión nueva de Citrus", "Para seguir usando Citrus hay que actualizar a la versión {info.version}. La descarga ya empezó.")
+    let row = append(card, el("div", "update-progress"))
+    let bar = append(row, el("div", "update-bar"))
+    attr(bar, "role", "progressbar")
+    attr(bar, "aria-label", "Descarga de la actualización")
+    fill = append(bar, el("div", "update-fill"))
+    label = append(row, span("update-percent", ""))
+    progress_set(info.percent)
+  } else if info.state == "ready" {
+    let dirty = app.tabs.filter(|t| t.dirty).len()
+    draw_message("La versión {info.version} está lista", if dirty > 0 { "Antes de instalar se guardan tus {dirty} requests con cambios." } else { "Citrus se cierra, se instala y vuelve a abrirse sola." })
+    let foot = append(card, el("div", "tour-foot"))
+    append(foot, el("div", "grow"))
+    append(foot, btn("primary", "Actualizar ahora", start_install))
+  } else {
+    draw_message("No se pudo descargar la actualización", "Revisa tu conexión y reintenta. También puedes instalar la versión {info.version} desde la página de Citrus.")
+    if info.message != nil { append(card, el("p", "update-detail", info.message)) }
+    let foot = append(card, el("div", "tour-foot"))
+    append(foot, btn("ghost", "Abrir la página de descarga", || api("openDownloadPage", nil, |r| nil)))
+    append(foot, el("div", "grow"))
+    append(foot, btn("primary", "Reintentar", || api("retryUpdate", nil, |r| nil)))
+  }
+}
+
+fn install() {
+  busy = "Instalando la actualización"
+  draw()
+  api("installUpdate", nil, |r| nil, |e| {
+    busy = nil
+    info = { state: "error", version: info.version, message: e.message }
+    draw()
+  })
+}
+
+fn save_next(decision = nil) {
+  problem = nil
+  if pending.is_empty() { return install() }
+  let tab = pending[0]
+  busy = "Guardando tus cambios"
+  draw()
+  api("saveRequest", { id: tab.id, model: tab.model, env: app.env, decision: decision }, |r| {
+    busy = nil
+    if r.blocked == true {
+      problem = { tab: tab, blocked: true }
+      draw()
+      return nil
+    }
+    pending.remove(0)
+    save_next()
+  }, |e| {
+    busy = nil
+    problem = { tab: tab, blocked: false, message: e.message }
+    draw()
+  })
+}
+
+fn skip_tab() {
+  pending.remove(0)
+  save_next()
+}
+
+fn start_install() {
+  pending = app.tabs.filter(|t| t.dirty)
+  save_next()
+}
+
+export fn show_update(next) {
+  // Mientras guarda o instala, un evento tardío no debe redibujar la pantalla.
+  if busy != nil { return nil }
+  let same_download = info != nil && info.state == "downloading" && next.state == "downloading" && fill != nil && problem == nil
+  info = next
+  if same_download { return progress_set(next.percent) }
+  if card == nil {
+    let layer = append(query("body"), el("div", "update-lock"))
+    attr(layer, "data-update-lock", "1")
+    card = append(layer, el("div", "tour-panel update-card"))
+    attr(card, "role", "alertdialog")
+    attr(card, "aria-modal", "true")
+    attr(card, "aria-label", "Actualización obligatoria de Citrus")
+    lock_page(layer)
+    app.locked = true
+  }
+  draw()
+}

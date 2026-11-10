@@ -188,7 +188,14 @@ export function modelFromFile(data, fallbackName = "Request") {
     observe: doc.observe && typeof doc.observe === "object" ? doc.observe : null,
     assert: testsFromFile(doc.assert),
     capture: mapToRows(doc.capture, true),
+    scripts: { before: String(doc.scripts?.before ?? ""), after: String(doc.scripts?.after ?? "") },
   };
+}
+
+function scriptsToFile(scripts) {
+  const before = scripts?.before?.trim() ? scripts.before : undefined;
+  const after = scripts?.after?.trim() ? scripts.after : undefined;
+  return before || after ? { ...(before ? { before } : {}), ...(after ? { after } : {}) } : undefined;
 }
 
 /** Campos a escribir en el YAML. `undefined` significa borrar la clave. */
@@ -213,6 +220,7 @@ export function modelToPatch(model) {
     observe: model.observe ?? undefined,
     assert: testsToFile(model.assert),
     capture: rowsToMap(enabledRows(model.capture ?? [])),
+    scripts: scriptsToFile(model.scripts),
   };
 }
 
@@ -230,5 +238,6 @@ export function emptyModel(name = "Nueva request") {
     observe: null,
     assert: [],
     capture: [],
+    scripts: { before: "", after: "" },
   };
 }

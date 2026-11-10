@@ -7,6 +7,8 @@ import { draw_request, env_changed, update_send_state } from "./request.tng"
 import { draw_response } from "./response.tng"
 import { btn, icon_btn, span, toast } from "./widgets.tng"
 import { open_intro } from "./tour.tng"
+import { open_guide } from "./guia.tng"
+import { show_update } from "./actualizar.tng"
 
 let root = query("#app")
 var topbar_host = nil
@@ -39,6 +41,7 @@ fn palette() {
     ["Guardar", "file", save_active, "Ctrl+S"],
     ["Cambiar distribución de paneles", "columns", toggle_layout, nil],
     ["Cambiar tema", "sun", toggle_theme, nil],
+    ["Guía completa: AWS, Lambda, logs y MySQL", "file", open_guide, nil],
     ["Ver la guía de inicio", "play", || guard_dirty(open_intro), nil],
     ["Configurar proxy", "settings", configure_proxy, nil],
   ] + (if app.manual_proxy != nil { [["Usar el proxy de Windows en vez de {app.manual_proxy}", "settings", clear_proxy, nil]] } else { [] })
@@ -243,6 +246,7 @@ fn draw_welcome(host) {
   append(actions, btn("", "Crear workspace", || open_from("createWorkspace"), "folderPlus"))
   if app.has_demo { append(actions, btn("ghost", "Probar la demo", || open_from("openDemo"), "bolt")) }
   append(actions, btn("ghost", "Ver cómo funciona", open_intro, "play"))
+  append(actions, btn("ghost", "Guía completa", open_guide, "file"))
   if !app.recents.is_empty() {
     let list = append(inner, el("div"))
     append(list, el("p", "recent-title", "Recientes"))
@@ -309,6 +313,7 @@ app.ui.secret_guard = secret_guard
 app.ui.run_folder = run_folder_view
 
 on_keys(|k| {
+  if app.locked == true { return true }
   if !k.ctrl { return false }
   match k.key {
     "Enter" => {
@@ -333,6 +338,8 @@ on_keys(|k| {
 
 on_window_focus(|| refresh_tree())
 
+on_update(show_update)
+
 apply_theme(app.theme)
 ipc_call("setTheme", { theme: app.theme }, nil, nil)
 draw_shell()
@@ -346,5 +353,9 @@ api("boot", nil, |r| {
   } else {
     draw_shell()
   }
-  if r.firstRun { open_intro() }
+  if r.update != nil {
+    show_update(r.update)
+  } else if r.firstRun {
+    open_intro()
+  }
 })

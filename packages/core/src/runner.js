@@ -12,6 +12,7 @@ import { prepareRequest } from "./prepare.js";
 import { buildObservation, logGroupOf, waitForObservedLogs } from "./logs.js";
 import { buildScope, interpolate, interpolateDeep, maskSecrets } from "./variables.js";
 import { listTree, readRequest } from "./workspace.js";
+import { hasScript, runAfterScript, runBeforeScript } from "./scripts.js";
 
 const baseHistory = (model, id, envId) => ({
   ts: new Date().toISOString(),
@@ -171,11 +172,14 @@ export async function runRequest({ root, model, id, envId, store, captures, conf
       ? await resolveEnvironment(root, envId, store, captures)
       : { protected: false, scope: buildScope({ secrets: captures ?? {} }), secretValues: [], missingSecrets: [], aws: {} };
     const run = model.type === "lambda" ? runLambda : runHttp;
+    const scriptLogs = [];
+    const scripted = model.type !== "lambda" && hasScript(model.scripts?.before);
+    const working = scripted ? await runBeforeScript({ model, env, captures, signal, logs: scriptLogs }) : model;
     // La foto de "antes" se toma antes de enviar. Si la base falla, la request sale igual.
-    const dbWatch = await startDbObservation(model, env);
+    const dbWatch = await startDbObservation(working, env);
     let outcome;
     try {
-      outcome = await run({ root, model, env, confirm, trust, envId, signal, timeoutMs });
+      outcome = await run({ root, model: working, env, confirm, trust, envId, signal, timeoutMs });
     } catch (err) {
       await dbWatch?.abort();
       throw err;
@@ -186,7 +190,19 @@ export async function runRequest({ root, model, id, envId, store, captures, conf
       result.db = dbResult.public;
       if (dbResult.ctx) ctx.db = dbResult.ctx;
     }
-    finishTests(result, model, ctx, env.scope, captures);
+    finishTests(result, working, ctx, env.scope, captures);
+    if (model.type !== "lambda" && hasScript(model.scripts?.after)) {
+      const res = {
+        status: ctx.status,
+        time: ctx.time,
+        size: ctx.size,
+        headers: ctx.headers,
+        json: ctx.body && typeof ctx.body === "object" ? ctx.body : null,
+        text: rawBody.toString("utf8"),
+      };
+      await runAfterScript({ model: working, env, captures, signal, logs: scriptLogs, res });
+    }
+    if (scriptLogs.length) result.scripts = scriptLogs;
     const refreshDb = dbResult?.refresh
       ? async (tests) => {
           const fresh = await dbResult.refresh();

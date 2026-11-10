@@ -18,7 +18,9 @@ const temp = await fs.mkdtemp(path.join(os.tmpdir(), "citrus-guia-"));
 const userData = path.join(temp, "user-data");
 
 // API "interna": solo se llega a ella a través del proxy.
+let lastAuth = null;
 const api = http.createServer((req, res) => {
+  lastAuth = req.headers.authorization ?? null;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify({ ok: true, ruta: req.url }));
 });
@@ -48,6 +50,15 @@ const proxyPort = proxy.address().port;
 const folder = path.join(userData, "ejemplo", "collections", "tienda");
 await fs.mkdir(folder, { recursive: true });
 await fs.writeFile(path.join(folder, "empresa.citrus.yaml"), `name: API de la empresa\nmethod: GET\nurl: http://api.empresa.invalid:80/lock\n`);
+await fs.writeFile(path.join(folder, "script.citrus.yaml"), `name: Con script
+method: GET
+url: http://127.0.0.1:${apiPort}/script
+scripts:
+  before: |
+    req.headers["Authorization"] = "Bearer token-de-prueba"
+  after: |
+    log("estado", res.status)
+`);
 await fs.writeFile(path.join(folder, "publica.citrus.yaml"), `name: HTTPS real\nmethod: GET\nurl: https://example.com/\n`);
 
 const launch = (args = []) =>
@@ -55,7 +66,7 @@ const launch = (args = []) =>
     // Con CITRUS_EXE se prueba el programa empaquetado en vez del código.
     executablePath: process.env.CITRUS_EXE || require("electron"),
     args: process.env.CITRUS_EXE ? args : [appDir, ...args],
-    env: { ...process.env, CITRUS_USER_DATA: userData, CITRUS_WORKSPACE: "" },
+    env: { ...process.env, CITRUS_USER_DATA: userData, CITRUS_WORKSPACE: "", CITRUS_NO_UPDATE: "1" },
   });
 
 const step = (name) => console.log(`· ${name}`);
@@ -112,6 +123,26 @@ try {
   await page.locator(".tour-card .btn", { hasText: "Seguir explorando" }).click();
   assert.equal(await page.locator(".tour-layer").count(), 0);
 
+  step("guía completa: todos los capítulos abren y caben");
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette input, input.palette-input").first().fill("Guía completa");
+  await page.keyboard.press("Enter");
+  await page.locator(".guide-page h3", { hasText: "Requests y variables" }).waitFor();
+  const capitulos = await page.locator("[data-capitulo]").allInnerTexts();
+  assert.equal(capitulos.length, 10);
+  for (const titulo of capitulos) {
+    await page.locator(`[data-capitulo="${titulo}"]`).click();
+    await page.locator(".guide-page h3", { hasText: titulo }).waitFor();
+    const extra = await page.locator(".guide-page").evaluate((e) => e.scrollWidth - e.clientWidth);
+    assert.ok(extra <= 1, `${titulo}: se sale de lado`);
+  }
+  await page.locator('[data-capitulo="Conectar AWS"]').click();
+  await page.locator(".guide-page code", { hasText: "lambda:InvokeFunction" }).waitFor();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(shots, "guia-completa.png") });
+  await page.locator(".modal .icon-btn[aria-label=Cerrar]").click();
+  assert.equal(await page.locator(".guide").count(), 0);
+
   const resPane = page.locator('[data-pane="response"]');
   step("proxy del sistema: llega a un host que solo el proxy conoce");
   await page.locator('[data-request="tienda/empresa.citrus.yaml"]').click();
@@ -124,6 +155,22 @@ try {
   await page.locator(".send").click();
   await resPane.locator('[data-status="200"]').waitFor({ timeout: 40000 });
   assert.ok(tunnels.includes("example.com:443"));
+
+  step("scripts: pone el Bearer y muestra la consola");
+  await page.locator('[data-request="tienda/script.citrus.yaml"]').click();
+  await page.locator('[data-subtab="scripts"]').click();
+  await page.locator('[data-script-snippet]').first().waitFor();
+  await page.waitForFunction(() => !!window.monaco, null, { timeout: 30000 });
+  await page.locator(".send").click();
+  await resPane.locator('[data-status="200"]').waitFor({ timeout: 20000 });
+  assert.equal(lastAuth, "Bearer token-de-prueba");
+  await resPane.locator('[data-restab="scripts"]').click();
+  await resPane.locator(".script-line", { hasText: "estado 200" }).waitFor();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(shots, "guia-scripts.png") });
+  await page.locator('[data-script-phase="after"]').click();
+  await page.locator('[data-script-snippet="Ver el resultado"]').click();
+  await page.locator(".scripts .view-lines", { hasText: "res.time" }).waitFor();
 
   step("proxy manual: se guarda cifrado");
   await page.keyboard.press("Control+k");
@@ -151,7 +198,37 @@ try {
   await page.locator('[data-pane="response"] [data-status="200"]').waitFor({ timeout: 20000 });
   assert.ok(tunnels.includes("api.empresa.invalid:80"));
 
-  const real = problems.filter((p) => !/favicon|Failed to load resource/.test(p));
+  step("actualización obligatoria: bloquea la app y guarda lo pendiente");
+  const empresa = path.join(folder, "empresa.citrus.yaml");
+  await page.locator(".url-input").fill("http://api.empresa.invalid:80/guardado-antes");
+  await page.locator('[data-request="tienda/publica.citrus.yaml"]').click();
+  await page.waitForFunction(() => document.querySelector(".url-input")?.value === "https://example.com/");
+  await page.locator(".url-input").fill("https://example.com/?t=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghijkl");
+  const send = (state) => appHandle.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].webContents.send("citrus:update", s), state);
+  await send({ state: "downloading", version: "9.9.9", percent: 40 });
+  await page.locator("[data-update-lock] .update-percent", { hasText: "40%" }).waitFor();
+  assert.equal(await page.evaluate(() => document.querySelector("#app").inert), true);
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(250);
+  assert.equal(await page.locator(".palette").count(), 0, "el teclado sigue activo detrás del bloqueo");
+  await send({ state: "downloading", version: "9.9.9", percent: 75 });
+  await page.locator("[data-update-lock] .update-percent", { hasText: "75%" }).waitFor();
+  await send({ state: "error", version: "9.9.9", message: "sin red" });
+  await page.locator(".update-card .btn", { hasText: "Reintentar" }).waitFor();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(shots, "bloqueo-error.png") });
+  await send({ state: "ready", version: "9.9.9" });
+  await page.locator(".update-card", { hasText: "2 requests con cambios" }).waitFor();
+  await page.screenshot({ path: path.join(shots, "bloqueo-listo.png") });
+  await page.locator(".update-card .btn", { hasText: "Actualizar ahora" }).click();
+  await page.locator(".update-card", { hasText: "credenciales escritas a mano" }).waitFor();
+  await page.locator(".update-card .btn", { hasText: "Descartar sus cambios" }).click();
+  // Fuera del programa instalado no hay nada que instalar: la pantalla debe seguir, sin dejar pasar.
+  await page.locator(".update-card", { hasText: "No hay ninguna actualización lista" }).waitFor();
+  assert.match(await fs.readFile(empresa, "utf8"), /guardado-antes/);
+  assert.doesNotMatch(await fs.readFile(path.join(folder, "publica.citrus.yaml"), "utf8"), /eyJ/);
+
+  const real =problems.filter((p) => !/favicon|Failed to load resource/.test(p));
   assert.deepEqual(real, []);
   console.log("GUIA OK");
 } catch (err) {

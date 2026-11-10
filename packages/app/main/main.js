@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
+import electronUpdater from "electron-updater";
 import { EXAMPLE_FIRST_REQUEST, prepareExample } from "./example.js";
 import {
   applyImport,
@@ -187,6 +188,42 @@ function windowsCertificates() {
   });
 }
 
+// ---------- Actualización automática desde GitHub Releases ----------
+
+const DOWNLOAD_PAGE = "https://manuelosmadev.github.io/citrus/";
+
+// null mientras no haya una versión nueva. Sin internet tampoco se sabe de ninguna, y la app sigue usable.
+let updateState = null;
+
+function publishUpdate(state) {
+  updateState = state;
+  win?.webContents.send("citrus:update", state);
+}
+
+function setupUpdates() {
+  if (!app.isPackaged || process.env.CITRUS_NO_UPDATE) return;
+  const { autoUpdater } = electronUpdater;
+  if (process.env.CITRUS_UPDATE_URL) autoUpdater.setFeedURL({ provider: "generic", url: process.env.CITRUS_UPDATE_URL });
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("error", (err) => {
+    console.error("Actualización:", err?.message ?? err);
+    if (updateState?.state === "downloading") {
+      publishUpdate({ ...updateState, state: "error", message: String(err?.message ?? err).slice(0, 200) });
+    }
+  });
+  autoUpdater.on("update-available", (info) => publishUpdate({ state: "downloading", version: info.version, percent: 0 }));
+  autoUpdater.on("download-progress", (progress) => {
+    if (updateState?.state === "downloading") publishUpdate({ ...updateState, percent: Math.floor(progress.percent) });
+  });
+  autoUpdater.on("update-downloaded", (info) => publishUpdate({ state: "ready", version: info.version }));
+  const check = () => {
+    if (!updateState) autoUpdater.checkForUpdates().catch(() => {});
+  };
+  check();
+  setInterval(check, 6 * 60 * 60 * 1000).unref();
+}
+
 // ---------- API para la UI: la UI nunca toca disco, llavero ni red ----------
 
 const api = {
@@ -200,7 +237,23 @@ const api = {
     }
     const { recents } = await readSettings();
     const firstRun = !opened && !settings.welcomed && settings.recents.length === 0;
-    return { opened, recents, hasDemo, firstRun, manualProxy: proxyHost(manualProxy) };
+    return { opened, recents, hasDemo, firstRun, manualProxy: proxyHost(manualProxy), update: updateState };
+  },
+
+  installUpdate() {
+    if (updateState?.state !== "ready") throw new CitrusError("NO_UPDATE", "No hay ninguna actualización lista.");
+    setImmediate(() => electronUpdater.autoUpdater.quitAndInstall(true, true));
+    return true;
+  },
+  retryUpdate() {
+    if (updateState?.state !== "error") return false;
+    publishUpdate({ state: "downloading", version: updateState.version, percent: 0 });
+    electronUpdater.autoUpdater.checkForUpdates().catch(() => {});
+    return true;
+  },
+  async openDownloadPage() {
+    await shell.openExternal(DOWNLOAD_PAGE);
+    return true;
   },
 
   async markWelcomed() {
@@ -537,6 +590,7 @@ app.whenReady().then(() => {
   // El proxy manual manda; si no hay, el de Windows, incluidos los archivos PAC de las empresas.
   loadManualProxy();
   setTrustedCertificates(windowsCertificates());
+  setupUpdates();
   setProxyResolver(async (url) => {
     if (manualProxy) return isLoopback(url) ? null : manualProxy;
     return parseProxyRules(await session.defaultSession.resolveProxy(url));
