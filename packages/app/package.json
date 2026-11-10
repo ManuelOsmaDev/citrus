@@ -1,6 +1,6 @@
 {
   "name": "@citrus/app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Citrus: el cliente de APIs para backends serverless.",
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,7 @@
     "start": "npm run build && electron .",
     "test:e2e": "npm run build && node test/e2e.mjs",
     "test:instalado": "node test/e2e-instalado.mjs",
+    "test:guia": "npm run build && node test/e2e-guia.mjs",
     "dist": "npm run build && electron-builder --win --x64"
   },
   "dependencies": {

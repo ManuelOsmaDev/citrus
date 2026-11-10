@@ -122,6 +122,7 @@
     install(tng) {
       const invoke = (f, args) => tng.invoke(f, args);
 
+      let tourReflow = null;
       tng.defineAll({
         ipc_call(method, args, ok, fail) {
           window.citrusBridge.call(method, Tng.toJS(args ?? null)).then(
@@ -201,6 +202,46 @@
             },
             true,
           );
+          return null;
+        },
+        // Guía de inicio: resalta un elemento y pone la tarjeta a su lado, sin salirse de la ventana.
+        tour_place(spot, card, selector) {
+          const place = () => {
+            const margin = 12;
+            const target = selector ? document.querySelector(selector) : null;
+            const w = card.offsetWidth;
+            const h = card.offsetHeight;
+            if (!target) {
+              card.style.left = `${(innerWidth - w) / 2}px`;
+              card.style.top = `${(innerHeight - h) / 2}px`;
+              return;
+            }
+            const r = target.getBoundingClientRect();
+            const box = { left: Math.max(4, r.left - 6), top: Math.max(4, r.top - 6) };
+            box.width = Math.min(innerWidth - box.left - 4, r.right + 6 - box.left);
+            box.height = Math.min(innerHeight - box.top - 4, r.bottom + 6 - box.top);
+            Object.assign(spot.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+            const bottom = box.top + box.height;
+            const right = box.left + box.width;
+            let left;
+            let top;
+            if (bottom + margin + h < innerHeight) [left, top] = [box.left, bottom + margin];
+            else if (box.top - margin - h > 0) [left, top] = [box.left, box.top - margin - h];
+            else if (right + margin + w < innerWidth) [left, top] = [right + margin, box.top];
+            else [left, top] = [box.left - margin - w, box.top];
+            card.style.left = `${Math.min(innerWidth - w - margin, Math.max(margin, left))}px`;
+            card.style.top = `${Math.min(innerHeight - h - margin, Math.max(margin, top))}px`;
+          };
+          if (selector && !document.querySelector(selector)) return false;
+          if (tourReflow) window.removeEventListener("resize", tourReflow);
+          tourReflow = place;
+          window.addEventListener("resize", place);
+          place();
+          return true;
+        },
+        tour_stop() {
+          if (tourReflow) window.removeEventListener("resize", tourReflow);
+          tourReflow = null;
           return null;
         },
         checked: (e) => e.checked === true,

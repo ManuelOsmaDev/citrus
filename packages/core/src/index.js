@@ -25,7 +25,7 @@ export {
 } from "./environments.js";
 export { keychainStore, memoryStore, secretAccount, workspaceScope } from "./secrets.js";
 export { prepareRequest } from "./prepare.js";
-export { sendHttp } from "./http.js";
+export { parseProxyRules, sendHttp, setProxyResolver, setTrustedCertificates } from "./http.js";
 export { runFolder, runRequest } from "./runner.js";
 export { completePending, evaluateAssertions, readPath, runCaptures, summarizeTests } from "./assertions.js";
 export { buildObservation, fetchInvocationLogs, fetchObservedLogs, functionNameOf, logGroupOf, requestIdsFromHeaders, traceUrl, waitForObservedLogs } from "./logs.js";

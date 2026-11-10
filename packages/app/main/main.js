@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
+import { execFile } from "node:child_process";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
+import { EXAMPLE_FIRST_REQUEST, prepareExample } from "./example.js";
 import {
   applyImport,
   buildSnippet,
@@ -36,6 +38,9 @@ import {
   saveEnvironment,
   saveRequest,
   scanModel,
+  parseProxyRules,
+  setProxyResolver,
+  setTrustedCertificates,
   setSecret,
   testDbConnection,
 } from "@citrus/core";
@@ -86,9 +91,15 @@ async function readSettings() {
   try {
     const data = JSON.parse(await fs.readFile(settingsFile(), "utf8"));
     const list = (value) => (Array.isArray(value) ? value.filter((r) => typeof r === "string") : []);
-    return { recents: list(data.recents), trusted: list(data.trusted), last: data.last ?? null };
+    return {
+      recents: list(data.recents),
+      trusted: list(data.trusted),
+      last: data.last ?? null,
+      welcomed: data.welcomed === true,
+      proxy: typeof data.proxy === "string" ? data.proxy : null,
+    };
   } catch {
-    return { recents: [], trusted: [], last: null };
+    return { recents: [], trusted: [], last: null, welcomed: false, proxy: null };
   }
 }
 
@@ -115,7 +126,10 @@ async function snapshot() {
   return { workspace, tree: await listTree(root), envs: await listEnvironments(root) };
 }
 
+const exampleDir = () => path.join(app.getPath("userData"), "ejemplo");
+
 async function activate(root) {
+  if (path.resolve(root) === exampleDir()) await prepareExample(exampleDir());
   workspace = await openWorkspace(root);
   await rememberWorkspace(workspace.root);
   return snapshot();
@@ -124,6 +138,53 @@ async function activate(root) {
 async function pickFolder(title, buttonLabel) {
   const result = await dialog.showOpenDialog(win, { title, buttonLabel, properties: ["openDirectory", "createDirectory"] });
   return result.canceled ? null : result.filePaths[0];
+}
+
+// ---------- Red de empresa: proxy y certificados ----------
+
+let manualProxy = null;
+
+const proxyHost = (url) => (url ? new URL(url).host : null);
+
+function isLoopback(url) {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+async function loadManualProxy() {
+  const { proxy } = await readSettings();
+  if (!proxy || !safeStorage.isEncryptionAvailable()) return;
+  try {
+    manualProxy = safeStorage.decryptString(Buffer.from(proxy, "base64"));
+  } catch {
+    manualProxy = null;
+  }
+}
+
+/** Los certificados raíz de Windows: ahí instalan el suyo los antivirus y los proxies de empresa. */
+function windowsCertificates() {
+  if (process.platform !== "win32") return Promise.resolve([]);
+  const script =
+    "[Console]::OutputEncoding=[Text.Encoding]::ASCII;" +
+    "Get-ChildItem Cert:\\LocalMachine\\Root,Cert:\\CurrentUser\\Root" +
+    " | Where-Object { $_.NotAfter -gt (Get-Date) }" +
+    " | ForEach-Object { [Convert]::ToBase64String($_.RawData) }";
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) return resolve([]);
+        const pems = String(stdout)
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((b64) => `-----BEGIN CERTIFICATE-----\n${b64.match(/.{1,64}/g).join("\n")}\n-----END CERTIFICATE-----\n`);
+        resolve(pems);
+      },
+    );
+  });
 }
 
 // ---------- API para la UI: la UI nunca toca disco, llavero ni red ----------
@@ -137,8 +198,38 @@ const api = {
     if (start && (await isWorkspace(start))) {
       opened = await activate(start).catch(() => null);
     }
-    const recents = (await readSettings()).recents;
-    return { opened, recents, hasDemo };
+    const { recents } = await readSettings();
+    const firstRun = !opened && !settings.welcomed && settings.recents.length === 0;
+    return { opened, recents, hasDemo, firstRun, manualProxy: proxyHost(manualProxy) };
+  },
+
+  async markWelcomed() {
+    await writeSettings({ ...(await readSettings()), welcomed: true });
+    return true;
+  },
+  async openExample() {
+    return { ...(await activate(exampleDir())), first: EXAMPLE_FIRST_REQUEST };
+  },
+
+  async setProxy({ url }) {
+    let parsed;
+    try {
+      parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`);
+    } catch {
+      throw new CitrusError("PROXY_INVALID", "Esa dirección de proxy no es válida. Ejemplo: http://proxy.empresa.com:8080");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new CitrusError("PROXY_UNSUPPORTED", "Citrus solo soporta proxies http y https.");
+    }
+    if (!safeStorage.isEncryptionAvailable()) throw new CitrusError("PROXY_STORAGE", "Windows no permite guardar el proxy cifrado.");
+    await writeSettings({ ...(await readSettings()), proxy: safeStorage.encryptString(parsed.href).toString("base64") });
+    manualProxy = parsed.href;
+    return { host: parsed.host };
+  },
+  async clearProxy() {
+    await writeSettings({ ...(await readSettings()), proxy: null });
+    manualProxy = null;
+    return true;
   },
 
   async chooseWorkspace() {
@@ -443,6 +534,13 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // El proxy manual manda; si no hay, el de Windows, incluidos los archivos PAC de las empresas.
+  loadManualProxy();
+  setTrustedCertificates(windowsCertificates());
+  setProxyResolver(async (url) => {
+    if (manualProxy) return isLoopback(url) ? null : manualProxy;
+    return parseProxyRules(await session.defaultSession.resolveProxy(url));
+  });
   if (process.platform === "darwin") {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]));
   } else {

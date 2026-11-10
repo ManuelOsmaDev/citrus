@@ -1,11 +1,12 @@
 // Citrus: arma la ventana y conecta las vistas.
-import { active_tab, any_dirty, api, app, close_tab, activate_tab, enter_workspace, leave_workspace, refresh_env, refresh_tree, save_active, select_env, send_active, set_theme } from "./state.tng"
+import { open_request, active_tab, any_dirty, api, app, close_tab, activate_tab, enter_workspace, leave_workspace, refresh_env, refresh_tree, save_active, select_env, send_active, set_theme } from "./state.tng"
 import { ask_text, confirm_box, open_env_editor, open_import, open_snippet, run_folder_view, secret_guard } from "./modals.tng"
 import { open_palette } from "./palette.tng"
 import { draw_sidebar } from "./sidebar.tng"
 import { draw_request, env_changed, update_send_state } from "./request.tng"
 import { draw_response } from "./response.tng"
 import { btn, icon_btn, span, toast } from "./widgets.tng"
+import { open_intro } from "./tour.tng"
 
 let root = query("#app")
 var topbar_host = nil
@@ -23,7 +24,7 @@ fn new_request_action() {
   ask_text("Nueva request", "Nombre", "Crear pedido", "Crear", |name| {
     api("createRequest", { folder: "", name: name }, |r| {
       refresh_tree()
-      app.ui.open(r.id)
+      open_request(r.id)
     })
   })
 }
@@ -38,10 +39,28 @@ fn palette() {
     ["Guardar", "file", save_active, "Ctrl+S"],
     ["Cambiar distribución de paneles", "columns", toggle_layout, nil],
     ["Cambiar tema", "sun", toggle_theme, nil],
-  ]
+    ["Ver la guía de inicio", "play", || guard_dirty(open_intro), nil],
+    ["Configurar proxy", "settings", configure_proxy, nil],
+  ] + (if app.manual_proxy != nil { [["Usar el proxy de Windows en vez de {app.manual_proxy}", "settings", clear_proxy, nil]] } else { [] })
   let env_actions = app.envs.filter(|e| e.id != app.env).map(|e| ["Cambiar al entorno {e.name}", "layers", || select_env(e.id), nil])
   let tab_actions = if active_tab() != nil { [["Copiar como código", "code", || open_snippet(active_tab()), nil]] } else { [] }
   open_palette(base + tab_actions + env_actions)
+}
+
+fn configure_proxy() {
+  ask_text("Configurar proxy", "Dirección del proxy de tu empresa", "http://proxy.empresa.com:8080", "Guardar", |url| {
+    api("setProxy", { url: url }, |r| {
+      app.manual_proxy = r.host
+      toast("Las requests ahora pasan por {r.host}", "ok")
+    })
+  })
+}
+
+fn clear_proxy() {
+  api("clearProxy", nil, |r| {
+    app.manual_proxy = nil
+    toast("Citrus vuelve a usar el proxy de Windows", "ok")
+  })
 }
 
 fn toggle_theme() {
@@ -223,6 +242,7 @@ fn draw_welcome(host) {
   append(actions, btn("primary", "Abrir workspace", || open_from("chooseWorkspace"), "folder"))
   append(actions, btn("", "Crear workspace", || open_from("createWorkspace"), "folderPlus"))
   if app.has_demo { append(actions, btn("ghost", "Probar la demo", || open_from("openDemo"), "bolt")) }
+  append(actions, btn("ghost", "Ver cómo funciona", open_intro, "play"))
   if !app.recents.is_empty() {
     let list = append(inner, el("div"))
     append(list, el("p", "recent-title", "Recientes"))
@@ -320,9 +340,11 @@ draw_shell()
 api("boot", nil, |r| {
   app.recents = r.recents
   app.has_demo = r.hasDemo
+  app.manual_proxy = r.manualProxy
   if r.opened != nil {
     enter_workspace(r.opened)
   } else {
     draw_shell()
   }
+  if r.firstRun { open_intro() }
 })

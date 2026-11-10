@@ -1,0 +1,175 @@
+// Guía de primer uso: qué es Citrus y un recorrido con una API de ejemplo.
+import { active_tab, api, app, enter_workspace, open_request, send_active } from "./state.tng"
+import { btn, span } from "./widgets.tng"
+
+let SLIDES = [
+  {
+    kicker: "Bienvenido a Citrus",
+    title: "Lo que tu endpoint respondió, y lo que pasó adentro.",
+    text: "Citrus es un cliente de APIs para backends serverless. Envías una request y, en la misma pantalla, ves todo lo que provocó.",
+    items: [],
+  },
+  {
+    kicker: "Qué ves en cada envío",
+    title: "Todo en una sola pantalla",
+    text: "Sin saltar entre la consola de AWS, el cliente de base de datos y tu cliente de APIs.",
+    items: [
+      ["send", "La respuesta", "Estado, cuerpo y el tiempo de cada fase."],
+      ["file", "Los logs", "Lo que escribió tu Lambda en CloudWatch."],
+      ["bolt", "El cold start", "Cuánto tardó tu Lambda en arrancar."],
+      ["layers", "La base de datos", "Las filas que cambiaron en MySQL."],
+    ],
+  },
+  {
+    kicker: "Tus datos son tuyos",
+    title: "Sin cuenta y sin nube",
+    text: "Tus colecciones son archivos YAML en tu carpeta, listos para Git. Los secretos van al llavero de Windows.",
+    items: [
+      ["folder", "Archivos normales", "Se revisan y se comparten como tu código."],
+      ["lock", "Secretos protegidos", "Nunca se escriben en tus archivos."],
+      ["upload", "Trae lo que tienes", "Importa cURL, Postman, serverless.yml o SAM."],
+    ],
+  },
+]
+
+let STEPS = [
+  { sel: ".sidebar", title: "Tus requests", text: "Cada request es un archivo dentro de tu carpeta. Esta colección de ejemplo ya está lista para usar." },
+  { sel: ".send", title: "Envía la request", text: "Pulsa Enviar. Llama a una API de ejemplo que corre dentro de Citrus, así que no necesitas internet.", wait: true },
+  { sel: '[data-pane="response"]', title: "La respuesta", text: "Aquí está el estado, el tiempo de cada fase (DNS, conexión, TLS y espera) y el cuerpo que devolvió la API." },
+  { sel: '[data-subtab="observe"]', title: "Lo que pasó adentro", text: "En Observar conectas los logs de CloudWatch, el cold start de tu Lambda y las filas que cambió en MySQL." },
+  { sel: '[data-subtab="tests"]', title: "Pruebas en cada envío", text: "Escribe condiciones como status == 200 y Citrus las revisa cada vez que envías." },
+  { sel: ".env-picker", title: "Entornos", text: 'Cambia entre local, staging o producción. Las variables como {{baseUrl}} toman el valor del entorno activo.' },
+  { sel: ".palette-trigger", title: "Cualquier acción con Ctrl+K", text: "Busca requests y acciones. Si tu empresa usa un proxy que Windows no conoce, aquí está Configurar proxy." },
+  { sel: ".tb-right .btn", title: "Trae tus endpoints", text: "Importa desde cURL, Postman, serverless.yml o un template de SAM y empieza con lo que ya tienes." },
+]
+
+var layer = nil
+var poll = 0
+
+fn close_tour() {
+  poll += 1
+  tour_stop()
+  if layer != nil {
+    remove(layer)
+    layer = nil
+  }
+}
+
+fn new_layer(cls) {
+  close_tour()
+  layer = append(query("body"), el("div", "tour-layer {cls}"))
+  layer
+}
+
+fn draw_slide(i) {
+  clear(layer)
+  let s = SLIDES[i]
+  let panel = append(layer, el("div", "tour-panel"))
+  attr(panel, "role", "dialog")
+  attr(panel, "aria-modal", "true")
+  attr(panel, "aria-label", s.kicker)
+  let top = append(panel, el("div", "tour-top"))
+  append(top, logo(34))
+  let dots = append(top, el("div", "tour-dots"))
+  for n in 0..SLIDES.len() {
+    toggle_class(append(dots, el("span", "tour-dot")), "on", n == i)
+  }
+  let content = append(panel, el("div", "tour-content"))
+  append(content, span("tour-kicker", s.kicker))
+  append(content, el("h2", nil, s.title))
+  append(content, el("p", "tour-text", s.text))
+  if !s.items.is_empty() {
+    let list = append(content, el("div", "tour-items"))
+    for it in s.items {
+      let row = append(list, el("div", "tour-item"))
+      append(append(row, el("span", "tour-item-icon")), icon(it[0], 16))
+      let words = append(row, el("div"))
+      append(words, el("strong", nil, it[1]))
+      append(words, el("span", nil, it[2]))
+    }
+  }
+  let foot = append(panel, el("div", "tour-foot"))
+  append(foot, btn("ghost", "Saltar", close_tour))
+  append(foot, el("div", "grow"))
+  if i > 0 { append(foot, btn("", "Atrás", || draw_slide(i - 1))) }
+  if i < SLIDES.len() - 1 {
+    append(foot, btn("primary", "Siguiente", || draw_slide(i + 1)))
+  } else {
+    append(foot, btn("primary", "Probar con un ejemplo", start_example, "play"))
+  }
+}
+
+export fn open_intro() {
+  api("markWelcomed", nil, |r| nil)
+  new_layer("is-intro")
+  draw_slide(0)
+}
+
+// Espera a que un elemento exista: la pantalla se dibuja poco a poco.
+fn wait_for(selector, done, tries = 60) {
+  if query(selector) != nil { return done() }
+  if tries > 0 { after(100, || wait_for(selector, done, tries - 1)) }
+}
+
+fn start_example() {
+  api("openExample", nil, |snap| {
+    enter_workspace(snap)
+    open_request(snap.first)
+    new_layer("is-step")
+    wait_for(".send", || show_step(0))
+  })
+}
+
+fn wait_response(mine, done) {
+  if mine != poll { return nil }
+  let tab = active_tab()
+  if tab != nil && !tab.sending && tab.response != nil {
+    after(450, || { if mine == poll { done() } })
+  } else {
+    after(150, || wait_response(mine, done))
+  }
+}
+
+fn show_step(i) {
+  poll += 1
+  if i >= STEPS.len() { return show_end() }
+  let s = STEPS[i]
+  clear(layer)
+  let spot = append(layer, el("div", "tour-spot"))
+  let card = append(layer, el("div", "tour-card"))
+  attr(card, "role", "dialog")
+  attr(card, "aria-label", s.title)
+  append(card, span("tour-count", "Paso {i + 1} de {STEPS.len()}"))
+  append(card, el("h3", nil, s.title))
+  append(card, el("p", nil, s.text))
+  let foot = append(card, el("div", "tour-foot"))
+  append(foot, btn("ghost", "Saltar", close_tour))
+  append(foot, el("div", "grow"))
+  if s.wait {
+    append(foot, btn("primary", "Enviar por mí", send_active, "send"))
+    wait_response(poll, || show_step(i + 1))
+  } else {
+    append(foot, btn("primary", if i == STEPS.len() - 1 { "Terminar" } else { "Siguiente" }, || show_step(i + 1)))
+  }
+  if !tour_place(spot, card, s.sel) { show_step(i + 1) }
+}
+
+fn show_end() {
+  clear(layer)
+  let card = append(layer, el("div", "tour-card is-end"))
+  attr(card, "role", "dialog")
+  attr(card, "aria-label", "Guía terminada")
+  append(card, logo(34))
+  append(card, el("h3", nil, "Ya sabes lo básico"))
+  append(card, el("p", nil, "Puedes seguir probando este ejemplo o crear tu propio workspace. La guía sigue en Ctrl+K."))
+  let foot = append(card, el("div", "tour-foot"))
+  append(foot, btn("", "Seguir explorando", close_tour))
+  append(foot, el("div", "grow"))
+  append(foot, btn("primary", "Crear mi workspace", || {
+    close_tour()
+    api("createWorkspace", nil, |snap| {
+      if snap != nil { enter_workspace(snap) }
+    })
+  }, "folderPlus"))
+  tour_place(nil, card, nil)
+}
