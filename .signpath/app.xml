@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuración de artefacto "app" en SignPath: firma Citrus.exe dentro de la carpeta compilada.
+     Las DLL de Electron se incluyen tal cual, sin firmar con este certificado. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="Citrus.exe" product-name="Citrus" product-version="${version}.0">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

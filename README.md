@@ -14,6 +14,8 @@ npm run dist
 
 Genera `packages/app/release/Citrus-Setup-0.2.0.exe`. `npm run test:instalado -w @citrus/app` lo instala de verdad, lo usa contra la demo y lo desinstala. No está firmado: Windows SmartScreen muestra un aviso al abrirlo.
 
+Los instaladores que se publican los compila GitHub Actions con `.github/workflows/compilar.yml` al subir una etiqueta `v*`. Ver la [Code signing policy](docs/FIRMA.md).
+
 Desde el código:
 
 ```bash
@@ -103,3 +105,7 @@ npm run test:e2e
 ```
 
 `npm run test:db` prueba snapshot y binlog contra un MySQL real y temporal. `npm test` prueba el motor, incluido el llavero real. `test:e2e` abre la app de Electron y la usa contra la API de demo.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Qué se firma, quién lo aprueba y qué datos envía Citrus: [docs/FIRMA.md](docs/FIRMA.md).

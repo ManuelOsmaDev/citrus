@@ -1,0 +1,137 @@
+name: Compilar Citrus para Windows
+
+# Compila el instalador en GitHub a partir del código. SignPath solo firma lo que sale de aquí.
+# Con una etiqueta v* publica el Release. A mano solo compila y deja los archivos en la ejecución.
+# Sin el secreto SIGNPATH_API_TOKEN compila igual, sin firmar.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      FIRMAR: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      - name: Versión
+        run: |
+          VERSION=$(node -p "require('./packages/app/package.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "La etiqueta $GITHUB_REF_NAME no coincide con la versión $VERSION de packages/app/package.json."
+            exit 1
+          fi
+
+      - name: Compilar la app
+        working-directory: packages/app
+        run: npm run build && npx electron-builder --win --x64 --dir --publish never
+
+      # Primero Citrus.exe: es el programa que revisan los antivirus. Va firmado dentro del instalador.
+      - name: Subir la app para firmar
+        if: env.FIRMAR == 'true'
+        id: app-sin-firma
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-sin-firma
+          path: packages/app/release/win-unpacked
+      - name: Firmar Citrus.exe con SignPath
+        if: env.FIRMAR == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: citrus
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.app-sin-firma.outputs.artifact-id }}
+          wait-for-completion: true
+          # Cada firma se aprueba a mano en SignPath.
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: packages/app/release/app-firmada
+          parameters: |
+            version: ${{ toJSON(env.VERSION) }}
+      - name: Usar el Citrus.exe firmado
+        if: env.FIRMAR == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item packages/app/release/app-firmada/Citrus.exe packages/app/release/win-unpacked/Citrus.exe -Force
+          $firma = Get-AuthenticodeSignature packages/app/release/win-unpacked/Citrus.exe
+          if ($firma.Status -ne 'Valid') { throw "Citrus.exe no quedó firmado: $($firma.Status)" }
+
+      - name: Armar el instalador
+        working-directory: packages/app
+        run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
+
+      - name: Subir el instalador para firmar
+        if: env.FIRMAR == 'true'
+        id: instalador-sin-firma
+        uses: actions/upload-artifact@v7
+        with:
+          path: packages/app/release/Citrus-Setup-${{ env.VERSION }}.exe
+          archive: false
+      - name: Firmar el instalador con SignPath
+        if: env.FIRMAR == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: citrus
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: instalador
+          github-artifact-id: ${{ steps.instalador-sin-firma.outputs.artifact-id }}
+          skip-decompress: true
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: packages/app/release/instalador-firmado
+          parameters: |
+            version: ${{ toJSON(env.VERSION) }}
+      # La firma cambia los bytes: latest.yml y el .blockmap deben calcularse con el archivo firmado.
+      - name: Usar el instalador firmado
+        if: env.FIRMAR == 'true'
+        shell: pwsh
+        run: |
+          $nombre = "Citrus-Setup-$env:VERSION.exe"
+          $firmado = Get-ChildItem packages/app/release/instalador-firmado -Recurse -Filter *.exe | Select-Object -First 1
+          Copy-Item $firmado.FullName "packages/app/release/$nombre" -Force
+          $firma = Get-AuthenticodeSignature "packages/app/release/$nombre"
+          if ($firma.Status -ne 'Valid') { throw "El instalador no quedó firmado: $($firma.Status)" }
+          node packages/app/scripts/actualizar-latest.mjs "packages/app/release/$nombre"
+
+      - name: Guardar los archivos
+        uses: actions/upload-artifact@v7
+        with:
+          name: citrus-windows-${{ env.VERSION }}
+          if-no-files-found: error
+          path: |
+            packages/app/release/Citrus-Setup-${{ env.VERSION }}.exe
+            packages/app/release/Citrus-Setup-${{ env.VERSION }}.exe.blockmap
+            packages/app/release/latest.yml
+
+      - name: Publicar el Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd packages/app/release
+          NOTAS="../notas/v$VERSION.md"
+          if [ -f "$NOTAS" ]; then NOTAS_ARG=(--notes-file "$NOTAS"); else NOTAS_ARG=(--generate-notes); fi
+          gh release create "v$VERSION" "Citrus-Setup-$VERSION.exe" "Citrus-Setup-$VERSION.exe.blockmap" latest.yml \
+            --verify-tag --title "Citrus $VERSION" "${NOTAS_ARG[@]}"
+          # La web toma el instalador del Release: se vuelve a publicar ahora que existe.
+          gh workflow run sitio.yml --ref main

@@ -626,7 +626,9 @@ fn draw_download_card() {
 
   let warn = append(card, el("div", "dl-warn"))
   append(warn, el("b", nil, "Windows te va a avisar. "))
-  add_text(warn, "El instalador todavía no está firmado, así que SmartScreen muestra «Windows protegió tu PC». Para seguir, elige Más información y después Ejecutar de todas formas.")
+  add_text(warn, "El instalador todavía no está firmado, así que SmartScreen muestra «Windows protegió tu PC». Para seguir, elige Más información y después Ejecutar de todas formas. ")
+  let policy = append(warn, link(nil, "Code signing policy", "{REPO_URL}/blob/main/docs/FIRMA.md"))
+  attr(policy, "rel", "noopener")
 
   let hash = append(card, el("div", "dl-hash"))
   append(hash, el("span", nil, "SHA-256, para comprobar la descarga"))
@@ -776,6 +778,8 @@ fn draw_footer() {
   let a = append(made, link(nil, "Tangerine", "https://www.npmjs.com/package/tangerine-lang"))
   attr(a, "rel", "noopener")
   add_text(made, ".")
+  let policy = append(w, link(nil, "Code signing policy", "{REPO_URL}/blob/main/docs/FIRMA.md"))
+  attr(policy, "rel", "noopener")
   foot
 }
 
