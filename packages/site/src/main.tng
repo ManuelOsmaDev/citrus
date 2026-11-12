@@ -623,6 +623,10 @@ fn draw_download_card() {
   attr(button, "download", RELEASE.file)
   on(button, "click", || after(600, open_survey))
   append(card, el("div", "dl-meta", "{RELEASE.file} · {RELEASE.size}"))
+  let signing = append(card, el("div", "dl-meta"))
+  add_text(signing, "Free code signing provided by SignPath.io, certificate by SignPath Foundation. ")
+  let signing_link = append(signing, link(nil, "Code signing policy", "{REPO_URL}/blob/main/docs/FIRMA.md"))
+  attr(signing_link, "rel", "noopener")
 
   let warn = append(card, el("div", "dl-warn"))
   append(warn, el("b", nil, "Windows te va a avisar. "))
