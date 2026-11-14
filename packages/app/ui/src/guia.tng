@@ -159,7 +159,7 @@ fn con_codigo(host, texto) {
   }
 }
 
-export fn open_guide() {
+export fn open_guide(capitulo = nil) {
   let body = el("div", "guide")
   let lista = append(body, el("nav", "guide-nav"))
   attr(lista, "aria-label", "Capítulos")
@@ -194,5 +194,5 @@ export fn open_guide() {
     botones.push(b)
   }
   modal("Guía completa de Citrus", body, [], { wide: true })
-  mostrar(0)
+  mostrar(CAPITULOS.position(|c| c.titulo == capitulo) ?? 0)
 }

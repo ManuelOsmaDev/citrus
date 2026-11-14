@@ -127,6 +127,8 @@ export async function describeEnvironment(root, id, store, captures = {}) {
     resolved: shown,
     captured: Object.keys(captures),
     dbNames: Object.keys(resolved.db),
+    // Perfil y región que de verdad se usan, incluidos los heredados.
+    awsResolved: resolved.aws,
     secrets: resolved.secretNames.map((name) => ({
       name,
       isSet: !resolved.missingSecrets.includes(name),
@@ -144,7 +146,10 @@ export async function saveEnvironment(root, id, { variables, protected: isProtec
   if (doc.contents === null) doc.contents = doc.createNode({ name: id });
   if (variables !== undefined) doc.set("variables", doc.createNode(variables));
   if (isProtected !== undefined) doc.set("protected", isProtected === true);
-  if (aws !== undefined) doc.set("aws", doc.createNode(aws));
+  if (aws !== undefined) {
+    if (Object.keys(aws ?? {}).length) doc.set("aws", doc.createNode(aws));
+    else doc.delete("aws");
+  }
   if (db !== undefined && !isDeepStrictEqual(doc.toJS()?.db ?? {}, db)) {
     if (Object.keys(db).length) doc.set("db", doc.createNode(db));
     else doc.delete("db");

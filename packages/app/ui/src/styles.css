@@ -564,3 +564,12 @@ input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var
 .guide-copy:hover { color: var(--text); }
 .guide-page .tour-foot { margin-top: auto; padding-top: 8px; }
 @media (prefers-reduced-motion: reduce) { .update-lock { animation: none; } .update-fill { transition: none; } }
+
+/* ---------- Renombrar y pasos de CloudWatch ---------- */
+.aws-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.logs-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-m); background: var(--surface-2); }
+.logs-steps-title { font-size: 13px; font-weight: 600; }
+.logs-steps ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.logs-steps li.done { color: var(--text-3); }
+.logs-steps li.done::marker { content: "✓  "; color: var(--accent); }
+.logs-steps .link { cursor: pointer; }

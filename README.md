@@ -12,7 +12,7 @@ Instalador para Windows, sin Node:
 npm run dist
 ```
 
-Genera `packages/app/release/Citrus-Setup-0.2.1.exe`. `npm run test:instalado -w @citrus/app` lo instala de verdad, lo usa contra la demo y lo desinstala. No está firmado: Windows SmartScreen muestra un aviso al abrirlo.
+Genera `packages/app/release/Citrus-Setup-0.2.2.exe`. `npm run test:instalado -w @citrus/app` lo instala de verdad, lo usa contra la demo y lo desinstala. No está firmado: Windows SmartScreen muestra un aviso al abrirlo.
 
 Los instaladores que se publican los compila GitHub Actions con `.github/workflows/compilar.yml` al subir una etiqueta `v*`. Ver la [Code signing policy](docs/FIRMA.md).
 

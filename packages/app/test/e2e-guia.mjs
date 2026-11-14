@@ -143,6 +143,40 @@ try {
   await page.locator(".modal .icon-btn[aria-label=Cerrar]").click();
   assert.equal(await page.locator(".guide").count(), 0);
 
+  step("renombrar y duplicar desde la barra lateral");
+  const listar = page.locator('[data-request="tienda/listar-productos.citrus.yaml"]');
+  await listar.hover();
+  await listar.locator('[aria-label="Renombrar"]').click();
+  const nombre = page.locator(".modal input").first();
+  assert.equal(await nombre.inputValue(), "Listar productos");
+  await nombre.fill("Productos renombrados");
+  await page.keyboard.press("Enter");
+  await listar.locator(".label", { hasText: "Productos renombrados" }).waitFor();
+  await page.locator(".tab .label", { hasText: "Productos renombrados" }).waitFor();
+  assert.match(await fs.readFile(path.join(folder, "listar-productos.citrus.yaml"), "utf8"), /name: Productos renombrados/);
+  await listar.hover();
+  await listar.locator('[aria-label="Duplicar"]').click();
+  await page.keyboard.press("Enter");
+  await page.locator(".tree-row .label", { hasText: "Productos renombrados (copia)" }).waitFor();
+  await page.locator(".tab.on .label", { hasText: "Productos renombrados (copia)" }).waitFor();
+
+  step("Observar explica CloudWatch y el entorno guarda AWS");
+  await page.locator('[data-subtab="observe"]').click();
+  await page.locator("[data-logs-steps]").waitFor();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: path.join(shots, "observar-pasos.png") });
+  await page.locator("[data-logs-steps] .link", { hasText: "Abrir entornos" }).click();
+  await page.locator("[data-aws-profile]").fill("mi-perfil");
+  await page.locator("[data-aws-region]").fill("us-east-1");
+  await page.locator(".modal .btn", { hasText: "Guardar entorno" }).click();
+  await page.waitForFunction(() => document.querySelector(".toast")?.textContent.includes("Entorno guardado"));
+  const entorno = await fs.readFile(path.join(userData, "ejemplo", "environments", "local.yaml"), "utf8");
+  assert.match(entorno, /profile: mi-perfil/);
+  assert.match(entorno, /region: us-east-1/);
+  await page.locator(".modal .btn", { hasText: "Cerrar" }).click();
+  await page.locator('[data-subtab="observe"]').click();
+  await page.locator("[data-logs-steps] li.done", { hasText: "perfil mi-perfil" }).waitFor();
+
   const resPane = page.locator('[data-pane="response"]');
   step("proxy del sistema: llega a un host que solo el proxy conoce");
   await page.locator('[data-request="tienda/empresa.citrus.yaml"]').click();

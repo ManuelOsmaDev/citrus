@@ -10,6 +10,8 @@ export {
   listTree,
   openWorkspace,
   readRequest,
+  renameRequest,
+  duplicateRequest,
   requestPath,
   saveRequest,
 } from "./workspace.js";

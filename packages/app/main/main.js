@@ -32,6 +32,8 @@ import {
   publicFindings,
   readHistory,
   readRequest,
+  renameRequest,
+  duplicateRequest,
   requestPath,
   resolveEnvironment,
   runFolder,
@@ -326,6 +328,8 @@ const api = {
     return saveRequest(root, id, model);
   },
   createRequest: ({ folder, name }) => createRequest(needWorkspace(), { folder, name }),
+  renameRequest: ({ id, name }) => renameRequest(needWorkspace(), id, name),
+  duplicateRequest: ({ id, name }) => duplicateRequest(needWorkspace(), id, name),
   createFolder: ({ parent, name }) => createFolder(needWorkspace(), { parent, name }),
   async deleteRequest({ id }) {
     // A la papelera, no un borrado definitivo.
@@ -338,8 +342,8 @@ const api = {
   snippet: ({ model, env, language }) => buildSnippet({ root: needWorkspace(), model, envId: env ?? null, store, language }),
   runFolder: ({ folder, env }) =>
     runFolder({ root: needWorkspace(), folder, envId: env ?? null, store, captures: currentCaptures(), confirm: askProtected, trust: askTrust }),
-  envSave: ({ id, variables, protected: isProtected, extends: parent, db }) =>
-    saveEnvironment(needWorkspace(), id, { variables, protected: isProtected, extends: parent, db }),
+  envSave: ({ id, variables, protected: isProtected, extends: parent, aws, db }) =>
+    saveEnvironment(needWorkspace(), id, { variables, protected: isProtected, extends: parent, aws, db }),
   envCreate: ({ id }) => createEnvironment(needWorkspace(), id),
   secretSet: ({ env, name, value }) => setSecret(needWorkspace(), env, name, value, store),
   secretDelete: ({ env, name }) => deleteSecret(needWorkspace(), env, name, store),

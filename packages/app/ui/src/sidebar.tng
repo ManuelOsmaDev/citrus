@@ -1,5 +1,5 @@
 // Barra lateral: árbol de colecciones e historial.
-import { api, app, close_tab, open_request, refresh_history, refresh_tree } from "./state.tng"
+import { api, app, close_tab, open_request, refresh_history, refresh_tree, snapshot } from "./state.tng"
 import { ask_text, confirm_box } from "./modals.tng"
 import { box, btn, fmt_ms, icon_btn, segmented, span, text_input, toast } from "./widgets.tng"
 
@@ -23,6 +23,35 @@ fn new_folder(parent) {
   ask_text("Nueva carpeta", "Nombre", "orders", "Crear", |name| {
     api("createFolder", { parent: parent, name: name }, |r| refresh_tree())
   })
+}
+
+// Si la request está abierta, la pestaña también cambia de nombre. Si tiene cambios sin guardar, los conserva.
+fn rename_request(node) {
+  ask_text("Renombrar request", "Nombre", node.name, "Renombrar", |name| {
+    api("renameRequest", { id: node.id, name: name }, |r| {
+      let tab = app.tabs.find(|t| t.id == node.id)
+      if tab != nil {
+        let was_dirty = tab.dirty
+        tab.model.name = r.name
+        if !was_dirty {
+          tab.raw = r.raw
+          tab.saved = snapshot(tab.model)
+        }
+        app.ui.tabs()
+        if app.active == node.id { app.ui.workspace() }
+      }
+      refresh_tree()
+    })
+  }, node.name)
+}
+
+fn duplicate_request(node) {
+  ask_text("Duplicar request", "Nombre de la copia", "{node.name} (copia)", "Duplicar", |name| {
+    api("duplicateRequest", { id: node.id, name: name }, |r| {
+      refresh_tree()
+      open_request(r.id)
+    })
+  }, "{node.name} (copia)")
 }
 
 fn delete_request(node) {
@@ -72,7 +101,14 @@ fn draw_nodes(host, nodes, depth, needle) {
       append(row, method_tag(node))
       let label = append(row, span("label", node.name))
       if node.type == "invalid" { attr(label, "title", node.error) }
+      if node.type != "invalid" {
+        append(row, icon_btn("edit", "Renombrar", || rename_request(node), "act"))
+        append(row, icon_btn("copy", "Duplicar", || duplicate_request(node), "act"))
+      }
       append(row, icon_btn("trash", "Mover a la papelera", || delete_request(node), "act"))
+      on(row, "dblclick", || {
+        if node.type != "invalid" { rename_request(node) }
+      })
       on(row, "click", || {
         if node.type == "invalid" {
           toast("YAML inválido: {node.error}", "error")

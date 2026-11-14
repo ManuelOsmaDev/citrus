@@ -25,6 +25,7 @@
     layers: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
     bolt: "M13 3L5 14h6l-1 7 8-11h-6z",
     copy: "M9 9h11v11H9zM5 15H4V4h11v1",
+    edit: "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4",
     alert: "M12 4l9 16H3zM12 10v4M12 17v.5",
     stop: "M7 7h10v10H7z",
     swap: "M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4",

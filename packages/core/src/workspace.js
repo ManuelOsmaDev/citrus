@@ -131,6 +131,46 @@ export async function saveRequest(root, id, model) {
   return { id, raw: output };
 }
 
+function cleanName(name) {
+  const clean = String(name ?? "").trim();
+  if (!clean) throw new CitrusError("BAD_NAME", "Escribe un nombre.");
+  return clean;
+}
+
+async function requestDocument(file) {
+  const doc = YAML.parseDocument(await fs.readFile(file, "utf8"));
+  if (doc.errors.length) throw new CitrusError("BAD_YAML", `El archivo tiene YAML inválido (${doc.errors[0].message}).`);
+  if (doc.contents === null) doc.contents = doc.createNode({});
+  return doc;
+}
+
+/**
+ * Cambia el nombre que se ve de una request. El archivo y su id no cambian,
+ * así las pestañas abiertas y el historial siguen apuntando a ella.
+ */
+export async function renameRequest(root, id, name) {
+  const clean = cleanName(name);
+  const file = await requestPath(root, id);
+  const doc = await requestDocument(file);
+  doc.set("name", clean);
+  const output = doc.toString();
+  await fs.writeFile(file, output);
+  return { id, name: clean, raw: output };
+}
+
+/** Copia una request completa, con sus tests, capturas y Observar, en la misma carpeta. */
+export async function duplicateRequest(root, id, name) {
+  const clean = cleanName(name);
+  const file = await requestPath(root, id);
+  const doc = await requestDocument(file);
+  doc.set("name", clean);
+  const dir = path.dirname(file);
+  const fileName = await freeName(dir, slugify(clean), REQUEST_EXT);
+  await fs.writeFile(path.join(dir, fileName), doc.toString(), { flag: "wx" });
+  const folder = path.posix.dirname(id.replace(/\\/g, "/"));
+  return { id: folder === "." ? fileName : `${folder}/${fileName}` };
+}
+
 /** Crea una request en una carpeta de la colección. Nunca pisa un archivo existente. */
 export async function createRequest(root, { folder = "", name, model, extra } = {}) {
   const base = path.join(root, COLLECTIONS_DIR);

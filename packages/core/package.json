@@ -6,7 +6,7 @@
   "type": "module",
   "exports": "./src/index.js",
   "scripts": {
-    "test": "node --test test/core.test.js test/phase2.test.js test/proxy.test.js test/scripts.test.js",
+    "test": "node --test test/core.test.js test/phase2.test.js test/proxy.test.js test/scripts.test.js test/workspace.test.js",
     "test:db": "node --test test/db.test.js"
   },
   "dependencies": {

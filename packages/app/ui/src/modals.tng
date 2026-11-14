@@ -15,9 +15,9 @@ export fn confirm_box(title, message, action_label, f) {
   focus(cancel)
 }
 
-export fn ask_text(title, label, placeholder, action_label, f) {
+export fn ask_text(title, label, placeholder, action_label, f, initial = "") {
   let body = el("div")
-  var current = ""
+  var current = initial
   var close = nil
   fn submit() {
     if !current.trim().is_empty() {
@@ -25,7 +25,7 @@ export fn ask_text(title, label, placeholder, action_label, f) {
       f(current.trim())
     }
   }
-  let input = text_input("", placeholder, |v| {
+  let input = text_input(initial, placeholder, |v| {
     current = v
   })
   on(input, "keydown", |e| {
@@ -139,6 +139,24 @@ fn draw_db_section(holder, info, form) {
   add_text(note, " y apunta aquí a localhost. Guarda el entorno antes de probar. La contraseña se define abajo, en Secretos.")
 }
 
+// Perfil y región para Lambda y CloudWatch. Otras claves del bloque aws, como endpoint, se conservan.
+fn draw_aws_section(holder, form) {
+  fn set_aws(key, v) {
+    if v.trim().is_empty() { form.aws.remove(key) } else { form.aws[key] = v.trim() }
+  }
+  let row = append(holder, el("div", "aws-row"))
+  let profile = text_input(form.aws.profile ?? "", "default", |v| set_aws("profile", v))
+  attr(profile, "data-aws-profile", "1")
+  append(row, field("Perfil", profile))
+  let region = text_input(form.aws.region ?? "", "us-east-1", |v| set_aws("region", v))
+  attr(region, "data-aws-region", "1")
+  append(row, field("Región", region))
+  let note = append(holder, el("div", "hint"))
+  add_text(note, "El perfil es uno de los que creaste con ")
+  append(note, el("code", nil, "aws configure --profile nombre"))
+  add_text(note, ". Vacío, Citrus usa tu perfil por defecto o las variables de AWS. Tus llaves nunca pasan por Citrus.")
+}
+
 export fn open_env_editor(start_id = nil) {
   let body = el("div")
   var selected = start_id ?? app.env
@@ -183,7 +201,7 @@ export fn open_env_editor(start_id = nil) {
   fn draw_env(holder, info) {
     clear(holder)
     let rows = variables_rows(info.variables)
-    form = { rows: rows, is_protected: info["protected"], parent: info["extends"] ?? "", dbs: info.db ?? {} }
+    form = { rows: rows, is_protected: info["protected"], parent: info["extends"] ?? "", dbs: info.db ?? {}, aws: info.aws ?? {} }
 
     let protect = append(holder, el("label", "switch-row"))
     let check = append(protect, el("input"))
@@ -203,6 +221,9 @@ export fn open_env_editor(start_id = nil) {
 
     append(holder, el("div", "section-title", "Variables"))
     append(holder, rows_table(rows, || nil, { key_placeholder: "Agregar variable", value_placeholder: "Valor", toggle: false }))
+
+    append(holder, el("div", "section-title", "AWS"))
+    draw_aws_section(holder, form)
 
     append(holder, el("div", "section-title", "Bases de datos"))
     draw_db_section(holder, info, form)
@@ -248,6 +269,7 @@ export fn open_env_editor(start_id = nil) {
     payload["protected"] = form.is_protected
     payload["extends"] = form.parent
     payload["db"] = form.dbs
+    payload["aws"] = form.aws
     api("envSave", payload, |r| {
       toast("Entorno guardado", "ok")
       refresh_envs()

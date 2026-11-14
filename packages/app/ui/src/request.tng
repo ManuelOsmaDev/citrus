@@ -1,5 +1,6 @@
 // Panel izquierdo: edición de la request.
 import { api, active_tab, app, cancel_active, send_active, touch } from "./state.tng"
+import { open_guide } from "./guia.tng"
 import { open_env_editor, open_snippet } from "./modals.tng"
 import { box, btn, field, rows_table, select_el, segmented, span, text_input, toast } from "./widgets.tng"
 
@@ -532,7 +533,7 @@ fn draw_observe_db(wrap, tab, spec) {
       touch(tab)
     }, { key_label: "Tabla", value_label: "WHERE, opcional", key_placeholder: "Agregar tabla", value_placeholder: "Opcional", toggle: false }))
     let hint = append(details, el("div", "hint"))
-    add_text(hint, "Sin tablas, Citrus compara todas las chicas de la base. Snapshot solo ejecuta SELECT, en una transacción de solo lectura.")
+    add_text(hint, "Sin tablas, Citrus compara todas las tablas de la base. Snapshot solo ejecuta SELECT, en una transacción de solo lectura.")
   }
 
   let picker = select_el("input", [["", "No observar"]] + known.map(|n| [n, n]), chosen, |v| {
@@ -562,8 +563,40 @@ fn draw_observe_db(wrap, tab, spec) {
   draw_details()
 }
 
+// Los pasos para ver CloudWatch, con lo que ya está listo marcado según el entorno activo.
+fn draw_logs_steps(wrap, m) {
+  let aws = if app.env_info != nil { app.env_info.awsResolved ?? {} } else { {} }
+  let has_aws = aws.profile != nil || aws.region != nil
+  let has_fn = m.observe != nil && m.observe.logs == true && (m.observe.lambda ?? "") != ""
+  let box_el = append(wrap, el("div", "logs-steps"))
+  attr(box_el, "data-logs-steps", "1")
+  append(box_el, el("div", "logs-steps-title", "Cómo ver los logs de CloudWatch"))
+  let list = append(box_el, el("ol"))
+
+  let one = append(list, el("li"))
+  toggle_class(one, "done", has_aws)
+  if has_aws {
+    add_text(one, "AWS listo en este entorno: perfil {aws.profile ?? "por defecto"}, región {aws.region ?? "por defecto"}. ")
+  } else {
+    add_text(one, "Elige tu perfil y región de AWS en el entorno. Si ya usas el AWS CLI con tu perfil por defecto, puedes saltar este paso. ")
+  }
+  let edit = append(one, el("a", "link", "Abrir entornos"))
+  on(edit, "click", || open_env_editor())
+
+  let two = append(list, el("li"))
+  toggle_class(two, "done", has_fn)
+  add_text(two, "Activa abajo «Traer los logs de CloudWatch» y escribe el nombre de la Lambda que atiende esta URL. Lo encuentras en la consola de AWS, en Lambda, o en tu serverless.yml.")
+
+  let three = append(list, el("li"))
+  add_text(three, "Envía la request. En la respuesta aparece la pestaña Logs con lo que escribió tu función, su duración, la memoria y si hubo cold start. Los logs tardan unos segundos en llegar.")
+
+  let more = append(box_el, el("a", "link", "Ver la guía completa de CloudWatch"))
+  on(more, "click", || open_guide("Logs de CloudWatch"))
+}
+
 fn draw_observe_logs(wrap, tab, spec, set_key) {
   let m = tab.model
+  draw_logs_steps(wrap, m)
   append(wrap, el("div", "field-title", "Logs"))
   let line = append(wrap, el("label", "switch-row"))
   let check = append(line, el("input"))
