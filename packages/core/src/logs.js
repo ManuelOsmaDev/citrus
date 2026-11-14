@@ -62,7 +62,7 @@ export function traceUrl(region, traceId) {
   return `https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#xray:traces/${traceId}`;
 }
 
-function friendly(err, logGroup) {
+export function friendlyLogsError(err, logGroup) {
   if (err instanceof CitrusError) return err;
   const name = err?.name ?? "";
   if (name === "ResourceNotFoundException") return new CitrusError("LOG_GROUP_NOT_FOUND", `No existe el grupo de logs ${logGroup}. Revisa el nombre de la función, la región y que se haya ejecutado al menos una vez.`);
@@ -72,7 +72,7 @@ function friendly(err, logGroup) {
   return new CitrusError(name || "AWS_ERROR", `CloudWatch respondió: ${err?.message ?? err}`);
 }
 
-async function filterAll(client, Command, input) {
+export async function filterAll(client, Command, input) {
   const events = [];
   let nextToken;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -187,7 +187,7 @@ export async function fetchInvocationLogs({ observation, aws = {} }) {
       region: await client.config.region(),
     };
   } catch (err) {
-    throw friendly(err, observation.logGroup);
+    throw friendlyLogsError(err, observation.logGroup);
   } finally {
     client.destroy();
   }

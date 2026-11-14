@@ -12,6 +12,8 @@ export {
   readRequest,
   renameRequest,
   duplicateRequest,
+  moveRequest,
+  renameFolder,
   requestPath,
   saveRequest,
 } from "./workspace.js";
@@ -42,3 +44,6 @@ export { describeBody, prettyJson } from "./format.js";
 export { importCurl } from "./importers/curl.js";
 export { importPostman } from "./importers/postman.js";
 export { applyImport } from "./importers/apply.js";
+export { exploreLogs, listLambdaFunctions, searchLambdaLogs } from "./explorer.js";
+export { clearAwsVariableCache, parseAwsReference, readAwsVariables } from "./awsvars.js";
+export { exportCurl, exportPostman } from "./exporters.js";

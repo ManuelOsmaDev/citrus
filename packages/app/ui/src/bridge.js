@@ -142,6 +142,34 @@
           window.citrusBridge.onUpdate((info) => invoke(f, [Tng.fromJS(info)]));
           return null;
         },
+        // Arrastrar una request a una carpeta. El id viaja en un tipo propio para no confundirlo con texto.
+        drag_source(e, id) {
+          e.draggable = true;
+          e.addEventListener("dragstart", (ev) => {
+            ev.dataTransfer.setData("text/x-citrus-request", String(id));
+            ev.dataTransfer.effectAllowed = "move";
+          });
+          return e;
+        },
+        drop_target(e, f) {
+          const accepts = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes("text/x-citrus-request");
+          e.addEventListener("dragover", (ev) => {
+            if (!accepts(ev)) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev.dataTransfer.dropEffect = "move";
+            e.classList.add("drop-on");
+          });
+          e.addEventListener("dragleave", () => e.classList.remove("drop-on"));
+          e.addEventListener("drop", (ev) => {
+            e.classList.remove("drop-on");
+            if (!accepts(ev)) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            invoke(f, [ev.dataTransfer.getData("text/x-citrus-request")]);
+          });
+          return e;
+        },
         // Deja fuera del teclado y del ratón todo lo que no sea esta capa.
         lock_page(layer) {
           for (const node of document.body.children) {

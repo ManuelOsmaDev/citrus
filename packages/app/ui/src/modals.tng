@@ -155,6 +155,26 @@ fn draw_aws_section(holder, form) {
   add_text(note, "El perfil es uno de los que creaste con ")
   append(note, el("code", nil, "aws configure --profile nombre"))
   add_text(note, ". Vacío, Citrus usa tu perfil por defecto o las variables de AWS. Tus llaves nunca pasan por Citrus.")
+
+  append(holder, el("div", "field-title", "Variables desde AWS"))
+  let explain = append(holder, el("div", "hint"))
+  add_text(explain, "Para contraseñas y llaves que ya guardas en AWS Parameter Store o Secrets Manager. Citrus las lee al enviar, las trata como secretos y nunca las escribe en tus archivos. Escribe el nombre que usarás como ")
+  append(explain, el("code", nil, '{{nombre}}'))
+  add_text(explain, " y de dónde sale: ")
+  append(explain, el("code", nil, "ssm:/ruta/del/parametro"))
+  add_text(explain, " o ")
+  append(explain, el("code", nil, "secret:nombre-del-secreto#clave"))
+  add_text(explain, ". Tu usuario necesita ")
+  append(explain, el("code", nil, "ssm:GetParameter"))
+  add_text(explain, " o ")
+  append(explain, el("code", nil, "secretsmanager:GetSecretValue"))
+  add_text(explain, ".")
+  let table = append(holder, el("div"))
+  attr(table, "data-aws-vars", "1")
+  append(table, rows_table(form.aws_rows, || nil, { key_label: "Nombre", value_label: "De dónde sale", key_placeholder: "dbPassword", value_placeholder: "ssm:/miapp/dev/db-password", toggle: false }))
+  append(holder, btn("small", "Volver a leer de AWS", || {
+    api("clearAwsCache", nil, |r| toast("Citrus las vuelve a leer de AWS en el próximo envío.", "ok"))
+  }))
 }
 
 export fn open_env_editor(start_id = nil) {
@@ -201,7 +221,7 @@ export fn open_env_editor(start_id = nil) {
   fn draw_env(holder, info) {
     clear(holder)
     let rows = variables_rows(info.variables)
-    form = { rows: rows, is_protected: info["protected"], parent: info["extends"] ?? "", dbs: info.db ?? {}, aws: info.aws ?? {} }
+    form = { rows: rows, is_protected: info["protected"], parent: info["extends"] ?? "", dbs: info.db ?? {}, aws: info.aws ?? {}, aws_rows: variables_rows(info.awsVariables ?? {}) }
 
     let protect = append(holder, el("label", "switch-row"))
     let check = append(protect, el("input"))
@@ -231,7 +251,7 @@ export fn open_env_editor(start_id = nil) {
     append(holder, el("div", "section-title", "Secretos"))
     let note = append(holder, el("div", "hint"))
     add_text(note, "El valor queda en el llavero del sistema. En el YAML solo se guarda el nombre.")
-    for s in info.secrets {
+    for s in info.secrets.filter(|s| s.fromAws == nil) {
       append(holder, secret_row(info.id, s, after_change))
     }
     var new_secret = ""
@@ -270,6 +290,11 @@ export fn open_env_editor(start_id = nil) {
     payload["extends"] = form.parent
     payload["db"] = form.dbs
     payload["aws"] = form.aws
+    let aws_vars = {}
+    for r in form.aws_rows {
+      if !r.key.trim().is_empty() && !r.value.trim().is_empty() { aws_vars[r.key.trim()] = r.value.trim() }
+    }
+    payload["awsVariables"] = aws_vars
     api("envSave", payload, |r| {
       toast("Entorno guardado", "ok")
       refresh_envs()
@@ -282,6 +307,48 @@ export fn open_env_editor(start_id = nil) {
     btn("primary", "Guardar entorno", save_env),
   ], { wide: true })
   draw()
+}
+
+// ---------- Exportar ----------
+
+fn show_export_warnings(list) {
+  let body = el("div")
+  append(body, el("p", nil, "Se exportó todo menos esto:"))
+  let ul = append(body, el("ul", "warn-list"))
+  for w in list { append(ul, el("li", nil, w)) }
+  var close = nil
+  close = modal("Exportación lista", body, [btn("primary", "Listo", || close())])
+}
+
+// Para compartir con quien no usa Citrus. Los secretos nunca salen: quedan como {{nombre}}.
+export fn open_export(folder, label) {
+  let body = el("div")
+  let intro = append(body, el("p"))
+  add_text(intro, "Crea un archivo con las requests de «{label}» para alguien que no usa Citrus. Los secretos nunca se incluyen: quedan como ")
+  append(intro, el("code", nil, '{{nombre}}'))
+  add_text(intro, " para que cada persona ponga los suyos.")
+  let choices = append(body, el("div", "export-choices"))
+  var close = nil
+  fn choose(format) {
+    api("exportFolder", { folder: folder, format: format, env: app.env }, |r| {
+      if !r.saved { return nil }
+      close()
+      toast("Exportadas {r.count} requests a {r.path}", "ok")
+      if !r.warnings.is_empty() { show_export_warnings(r.warnings) }
+    })
+  }
+  for o in [
+    ["postman", "Colección de Postman", "Un archivo .json. En Postman pulsa Import y elige el archivo. Lleva las variables del entorno activo, y los secretos vacíos."],
+    ["curl", "Comandos cURL", "Un archivo de texto con un comando curl por request, listo para pegar en una terminal. Las variables del entorno ya van puestas."],
+  ] {
+    let b = append(choices, el("button", "export-choice"))
+    attr(b, "data-export", o[0])
+    append(b, el("strong", nil, o[1]))
+    append(b, el("span", nil, o[2]))
+    on(b, "click", || choose(o[0]))
+  }
+  if app.env == nil { append(body, el("div", "hint", 'No hay un entorno activo: las variables quedan como {{nombre}}.')) }
+  close = modal("Exportar", body, [btn("ghost", "Cancelar", || close())])
 }
 
 // ---------- Importar ----------

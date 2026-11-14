@@ -33,7 +33,7 @@ const WRITERS = { curl, fetch: fetchSnippet, axios: axiosSnippet };
  * un snippet se comparte en chats y PRs, así que nunca lleva el valor real.
  */
 export async function buildSnippet({ root, model, envId, store, language = "curl" }) {
-  const env = envId ? await resolveEnvironment(root, envId, store) : null;
+  const env = envId ? await resolveEnvironment(root, envId, store, {}, { loadAws: false }) : null;
   const variables = {};
   for (const name of env?.variableNames ?? []) {
     if (!env.secretNames.includes(name)) variables[name] = env.scope.get(name);

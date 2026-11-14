@@ -1,6 +1,6 @@
 // Barra lateral: árbol de colecciones e historial.
-import { api, app, close_tab, open_request, refresh_history, refresh_tree, snapshot } from "./state.tng"
-import { ask_text, confirm_box } from "./modals.tng"
+import { api, app, close_tab, open_request, refresh_history, refresh_tree, retarget_tabs, snapshot } from "./state.tng"
+import { ask_text, confirm_box, open_export } from "./modals.tng"
 import { box, btn, fmt_ms, icon_btn, segmented, span, text_input, toast } from "./widgets.tng"
 
 fn method_tag(node) {
@@ -54,6 +54,30 @@ fn duplicate_request(node) {
   }, "{node.name} (copia)")
 }
 
+fn move_to(id, folder) {
+  api("moveRequest", { id: id, folder: folder }, |r| {
+    if r.id == id { return nil }
+    retarget_tabs(|t| {
+      if t == id { r.id } else { t }
+    })
+    refresh_tree()
+    toast(if folder == "" { "Movida a la raíz de la colección" } else { "Movida a {folder}" }, "ok")
+  })
+}
+
+fn rename_folder(node) {
+  ask_text("Renombrar carpeta", "Nombre", node.name, "Renombrar", |name| {
+    api("renameFolder", { folder: node.path, name: name }, |r| {
+      let prefix = "{r.from}/"
+      retarget_tabs(|t| {
+        if t.starts_with(prefix) { "{r.to}/{t.slice(prefix.len())}" } else { t }
+      })
+      if app.collapsed[r.from] == true { app.collapsed[r.to] = true }
+      refresh_tree()
+    })
+  }, node.name)
+}
+
 fn delete_request(node) {
   confirm_box("Mover a la papelera", "«{node.name}» se mueve a la papelera del sistema.", "Mover a la papelera", || {
     api("deleteRequest", { id: node.id }, |r| {
@@ -88,6 +112,10 @@ fn draw_nodes(host, nodes, depth, needle) {
       append(row, span("label", node.name))
       append(row, icon_btn("play", "Correr esta carpeta", || app.ui.run_folder(node.path, node.name), "act"))
       append(row, icon_btn("plus", "Nueva request aquí", || new_request(node.path), "act"))
+      append(row, icon_btn("edit", "Renombrar carpeta", || rename_folder(node), "act"))
+      append(row, icon_btn("download", "Exportar a Postman o cURL", || open_export(node.path, node.name), "act"))
+      attr(row, "data-folder", node.path)
+      drop_target(row, |id| move_to(id, node.path))
       on(row, "click", || {
         app.collapsed[node.path] = is_open
         draw_tree()
@@ -98,6 +126,10 @@ fn draw_nodes(host, nodes, depth, needle) {
       toggle_class(row, "on", node.id == app.active)
       set_style(row, "padding-left", "{pad}px")
       attr(row, "data-request", node.id)
+      if node.type != "invalid" {
+        drag_source(row, node.id)
+        attr(row, "title", "Arrastra para mover a otra carpeta. Doble clic para renombrar.")
+      }
       append(row, method_tag(node))
       let label = append(row, span("label", node.name))
       if node.type == "invalid" { attr(label, "title", node.error) }
@@ -194,5 +226,7 @@ export fn draw_sidebar(host) {
   append(tools, icon_btn("plus", "Nueva request", || new_request("")))
   append(tools, icon_btn("folderPlus", "Nueva carpeta", || new_folder("")))
   tree_host = append(host, el("div", "tree"))
+  // Soltar en el espacio libre del árbol deja la request en la raíz de la colección.
+  drop_target(tree_host, |id| move_to(id, ""))
   draw_tree()
 }

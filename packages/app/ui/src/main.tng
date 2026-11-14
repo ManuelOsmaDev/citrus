@@ -1,6 +1,7 @@
 // Citrus: arma la ventana y conecta las vistas.
 import { open_request, active_tab, any_dirty, api, app, close_tab, activate_tab, enter_workspace, leave_workspace, refresh_env, refresh_tree, save_active, select_env, send_active, set_theme } from "./state.tng"
-import { ask_text, confirm_box, open_env_editor, open_import, open_snippet, run_folder_view, secret_guard } from "./modals.tng"
+import { ask_text, confirm_box, open_env_editor, open_export, open_import, open_snippet, run_folder_view, secret_guard } from "./modals.tng"
+import { open_logs_explorer } from "./explorador.tng"
 import { open_palette } from "./palette.tng"
 import { draw_sidebar } from "./sidebar.tng"
 import { draw_request, env_changed, update_send_state } from "./request.tng"
@@ -31,6 +32,16 @@ fn new_request_action() {
   })
 }
 
+// La Lambda de la request abierta, para empezar a buscar en sus logs.
+fn current_lambda() {
+  let tab = active_tab()
+  if tab == nil { return "" }
+  let m = tab.model
+  if m.type == "lambda" { return m["function"] ?? "" }
+  if m.observe != nil { return m.observe.lambda ?? "" }
+  ""
+}
+
 fn palette() {
   if app.workspace == nil { return nil }
   let base = [
@@ -41,6 +52,8 @@ fn palette() {
     ["Guardar", "file", save_active, "Ctrl+S"],
     ["Cambiar distribución de paneles", "columns", toggle_layout, nil],
     ["Cambiar tema", "sun", toggle_theme, nil],
+    ["Buscar en los logs de una Lambda", "search", || open_logs_explorer(current_lambda()), nil],
+    ["Exportar toda la colección a Postman o cURL", "download", || open_export("", app.workspace.name), nil],
     ["Guía completa: AWS, Lambda, logs y MySQL", "file", open_guide, nil],
     ["Ver la guía de inicio", "play", || guard_dirty(open_intro), nil],
     ["Configurar proxy", "settings", configure_proxy, nil],
@@ -311,6 +324,7 @@ app.ui.env_changed = env_changed
 app.ui.confirm = confirm_box
 app.ui.secret_guard = secret_guard
 app.ui.run_folder = run_folder_view
+app.ui.logs_explorer = open_logs_explorer
 
 on_keys(|k| {
   if app.locked == true { return true }

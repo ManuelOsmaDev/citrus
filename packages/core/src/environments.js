@@ -3,6 +3,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { CitrusError } from "./errors.js";
+import { readAwsVariables } from "./awsvars.js";
 import { secretAccount } from "./secrets.js";
 import { buildScope } from "./variables.js";
 import { ENVIRONMENTS_DIR } from "./workspace.js";
@@ -39,6 +40,10 @@ export async function readEnvironment(root, id) {
     variables: data.variables && typeof data.variables === "object" ? data.variables : {},
     secrets: Array.isArray(data.secrets) ? data.secrets.map(String) : [],
     aws: data.aws && typeof data.aws === "object" ? data.aws : null,
+    awsVariables:
+      data.awsVariables && typeof data.awsVariables === "object"
+        ? Object.fromEntries(Object.entries(data.awsVariables).map(([k, v]) => [k, String(v ?? "")]))
+        : {},
     db: data.db && typeof data.db === "object" ? data.db : null,
   };
 }
@@ -78,15 +83,23 @@ async function chainOf(root, id) {
  * Resuelve un entorno con herencia y secretos.
  * `protected` lo decide el entorno pedido o cualquiera de sus padres: heredar no lo desactiva.
  */
-export async function resolveEnvironment(root, id, store, captures = {}) {
+/**
+ * Todo lo que un envío necesita de un entorno: variables, secretos, AWS y bases.
+ * Con `loadAws: false` no consulta AWS: las variables de AWS quedan como nombres sin valor.
+ */
+export async function resolveEnvironment(root, id, store, captures = {}, { loadAws = true } = {}) {
   const chain = await chainOf(root, id);
   const variables = Object.assign({}, ...chain.map((e) => e.variables));
   const db = Object.assign({}, ...chain.map((e) => e.db ?? {}));
+  const aws = Object.assign({}, ...chain.map((e) => e.aws ?? {}));
+  const awsVariables = Object.assign({}, ...chain.map((e) => e.awsVariables ?? {}));
+  const awsNames = Object.keys(awsVariables);
   const passwordSecrets = Object.values(db).map((d) => d?.passwordSecret).filter(Boolean).map(String);
-  const secretNames = [...new Set([...chain.flatMap((e) => e.secrets), ...passwordSecrets])];
+  const keychainNames = [...new Set([...chain.flatMap((e) => e.secrets), ...passwordSecrets])].filter((n) => !awsNames.includes(n));
+  const secretNames = [...keychainNames, ...awsNames];
   const secrets = {};
   const missingSecrets = [];
-  for (const name of secretNames) {
+  for (const name of keychainNames) {
     let value = null;
     // Primero el entorno pedido y luego sus padres.
     for (const env of [...chain].reverse()) {
@@ -96,12 +109,15 @@ export async function resolveEnvironment(root, id, store, captures = {}) {
     if (value === null) missingSecrets.push(name);
     else secrets[name] = value;
   }
+  // Solo cuando hacen falta: enviar, correr una carpeta o probar una conexión.
+  if (loadAws && awsNames.length) Object.assign(secrets, await readAwsVariables(awsVariables, aws));
   return {
     id,
     protected: chain.some((e) => e.protected),
     // Lo capturado se trata como literal: la respuesta de un servidor no debe expandir variables.
     scope: buildScope({ variables, secrets: { ...captures, ...secrets } }),
-    aws: Object.assign({}, ...chain.map((e) => e.aws ?? {})),
+    aws,
+    awsVariables,
     db,
     secretValues: Object.values(secrets),
     secretNames,
@@ -113,7 +129,7 @@ export async function resolveEnvironment(root, id, store, captures = {}) {
 /** Lo que la UI puede ver de un entorno. Nunca incluye el valor de un secreto. */
 export async function describeEnvironment(root, id, store, captures = {}) {
   const env = await readEnvironment(root, id);
-  const resolved = await resolveEnvironment(root, id, store, captures);
+  const resolved = await resolveEnvironment(root, id, store, captures, { loadAws: false });
   const shown = {};
   for (const name of resolved.variableNames) {
     if (!resolved.secretNames.includes(name)) shown[name] = resolved.scope.get(name);
@@ -132,13 +148,14 @@ export async function describeEnvironment(root, id, store, captures = {}) {
     secrets: resolved.secretNames.map((name) => ({
       name,
       isSet: !resolved.missingSecrets.includes(name),
-      own: env.secrets.includes(name),
+      own: env.secrets.includes(name) || name in env.awsVariables,
+      ...(resolved.awsVariables[name] ? { fromAws: resolved.awsVariables[name] } : {}),
     })),
   };
 }
 
 /** Actualiza un entorno y conserva comentarios y bloques que la UI no edita (aws, db). */
-export async function saveEnvironment(root, id, { variables, protected: isProtected, extends: parent, aws, db }) {
+export async function saveEnvironment(root, id, { variables, protected: isProtected, extends: parent, aws, awsVariables, db }) {
   const file = envFile(root, id);
   const previous = await fs.readFile(file, "utf8").catch(() => "");
   const doc = YAML.parseDocument(previous);
@@ -146,6 +163,10 @@ export async function saveEnvironment(root, id, { variables, protected: isProtec
   if (doc.contents === null) doc.contents = doc.createNode({ name: id });
   if (variables !== undefined) doc.set("variables", doc.createNode(variables));
   if (isProtected !== undefined) doc.set("protected", isProtected === true);
+  if (awsVariables !== undefined) {
+    if (Object.keys(awsVariables ?? {}).length) doc.set("awsVariables", doc.createNode(awsVariables));
+    else doc.delete("awsVariables");
+  }
   if (aws !== undefined) {
     if (Object.keys(aws ?? {}).length) doc.set("aws", doc.createNode(aws));
     else doc.delete("aws");

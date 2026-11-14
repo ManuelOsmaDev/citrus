@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright-core";
+import YAML from "yaml";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.join(here, "..");
@@ -60,6 +61,40 @@ scripts:
     log("estado", res.status)
 `);
 await fs.writeFile(path.join(folder, "publica.citrus.yaml"), `name: HTTPS real\nmethod: GET\nurl: https://example.com/\n`);
+
+// AWS de mentira para el explorador y las variables: CloudWatch Logs, Lambda y Parameter Store.
+const LAMBDA_IDS = ["11111111-aaaa-bbbb-cccc-000000000001", "22222222-aaaa-bbbb-cccc-000000000002"];
+const now = Date.now();
+const cloudwatch = [
+  { timestamp: now - 60000, message: `START RequestId: ${LAMBDA_IDS[0]} Version: $LATEST` },
+  { timestamp: now - 59990, message: `2026-11-14T10:00:00.010Z\t${LAMBDA_IDS[0]}\tINFO\tPedido creado` },
+  { timestamp: now - 59980, message: `REPORT RequestId: ${LAMBDA_IDS[0]}\tDuration: 41.00 ms\tBilled Duration: 42 ms\tMemory Size: 256 MB\tMax Memory Used: 88 MB\tInit Duration: 210.00 ms` },
+  { timestamp: now - 30000, message: `START RequestId: ${LAMBDA_IDS[1]} Version: $LATEST` },
+  { timestamp: now - 29990, message: `2026-11-14T10:00:30.010Z\t${LAMBDA_IDS[1]}\tERROR\tError: no hay stock` },
+  { timestamp: now - 29980, message: `REPORT RequestId: ${LAMBDA_IDS[1]}\tDuration: 12.00 ms\tBilled Duration: 12 ms\tMemory Size: 256 MB\tMax Memory Used: 90 MB` },
+];
+const fakeAws = http.createServer((req, res) => {
+  const chunks = [];
+  req.on("data", (d) => chunks.push(d));
+  req.on("end", () => {
+    const target = String(req.headers["x-amz-target"] ?? "");
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString() || "{}") : {};
+    const reply = (data, type = "application/x-amz-json-1.1") => {
+      res.writeHead(200, { "content-type": type });
+      res.end(JSON.stringify(data));
+    };
+    if (target.endsWith("FilterLogEvents")) {
+      const pattern = String(body.filterPattern ?? "");
+      const words = [...pattern.matchAll(/"([^"]+)"/g)].map((m) => m[1]).concat(pattern.includes("?ERROR") ? ["ERROR", "Error"] : []);
+      return reply({ events: cloudwatch.filter((e) => (!words.length || words.some((w) => e.message.includes(w))) && e.timestamp >= body.startTime && e.timestamp <= body.endTime) });
+    }
+    if (target === "AmazonSSM.GetParameter") return reply({ Parameter: { Name: body.Name, Value: "valor-desde-ssm" } });
+    if (req.url.startsWith("/2015-03-31/functions")) return reply({ Functions: [{ FunctionName: "pedidos-crear" }, { FunctionName: "auth-login" }] }, "application/json");
+    res.writeHead(400).end();
+  });
+});
+await new Promise((ok) => fakeAws.listen(0, "127.0.0.1", ok));
+const awsPort = fakeAws.address().port;
 
 const launch = (args = []) =>
   electron.launch({
@@ -129,7 +164,7 @@ try {
   await page.keyboard.press("Enter");
   await page.locator(".guide-page h3", { hasText: "Requests y variables" }).waitFor();
   const capitulos = await page.locator("[data-capitulo]").allInnerTexts();
-  assert.equal(capitulos.length, 10);
+  assert.equal(capitulos.length, 14);
   for (const titulo of capitulos) {
     await page.locator(`[data-capitulo="${titulo}"]`).click();
     await page.locator(".guide-page h3", { hasText: titulo }).waitFor();
@@ -150,13 +185,13 @@ try {
   const nombre = page.locator(".modal input").first();
   assert.equal(await nombre.inputValue(), "Listar productos");
   await nombre.fill("Productos renombrados");
-  await page.keyboard.press("Enter");
+  await page.locator(".modal input").first().press("Enter");
   await listar.locator(".label", { hasText: "Productos renombrados" }).waitFor();
   await page.locator(".tab .label", { hasText: "Productos renombrados" }).waitFor();
   assert.match(await fs.readFile(path.join(folder, "listar-productos.citrus.yaml"), "utf8"), /name: Productos renombrados/);
   await listar.hover();
   await listar.locator('[aria-label="Duplicar"]').click();
-  await page.keyboard.press("Enter");
+  await page.locator(".modal input").first().press("Enter");
   await page.locator(".tree-row .label", { hasText: "Productos renombrados (copia)" }).waitFor();
   await page.locator(".tab.on .label", { hasText: "Productos renombrados (copia)" }).waitFor();
 
@@ -176,6 +211,70 @@ try {
   await page.locator(".modal .btn", { hasText: "Cerrar" }).click();
   await page.locator('[data-subtab="observe"]').click();
   await page.locator("[data-logs-steps] li.done", { hasText: "perfil mi-perfil" }).waitFor();
+
+  step("explorador de logs: las invocaciones de una Lambda sin enviar nada");
+  const envFile = path.join(userData, "ejemplo", "environments", "local.yaml");
+  const envDoc = YAML.parse(await fs.readFile(envFile, "utf8"));
+  envDoc.aws = { endpoint: `http://127.0.0.1:${awsPort}`, region: "us-east-1" };
+  await fs.writeFile(envFile, YAML.stringify(envDoc));
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette input, input.palette-input").first().fill("Buscar en los logs");
+  await page.keyboard.press("Enter");
+  await page.locator(".explorer-intro[open]").waitFor();
+  await page.locator(".explorer-line .hint", { hasText: "2 funciones" }).waitFor({ timeout: 15000 });
+  await page.locator("[data-explorer-fn]").fill("pedidos-crear");
+  await page.locator("[data-explorer-search]").click();
+  await page.locator("[data-invocation]").nth(1).waitFor({ timeout: 15000 });
+  assert.equal(await page.locator("[data-invocation]").count(), 2);
+  assert.equal(await page.locator("[data-invocation]").first().getAttribute("data-invocation"), LAMBDA_IDS[1]);
+  await page.locator(".inv.open .log-row", { hasText: "no hay stock" }).waitFor();
+  await page.locator(".inv", { hasText: "Cold start" }).waitFor();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: path.join(shots, "explorador.png") });
+  await page.locator("[data-explorer-errors]").check();
+  await page.locator("[data-explorer-search]").click();
+  await page.waitForFunction(() => document.querySelectorAll("[data-invocation]").length === 1);
+  await page.locator(".modal .icon-btn[aria-label=Cerrar]").click();
+
+  step("arrastrar a otra carpeta, renombrar la carpeta y exportar");
+  await page.locator('.side-tools [aria-label="Nueva carpeta"]').click();
+  await page.locator(".modal input").first().fill("Movidas");
+  await page.locator(".modal input").first().press("Enter");
+  await page.locator('[data-folder="movidas"]').waitFor();
+  await page.locator('[data-request="tienda/productos-renombrados-copia.citrus.yaml"]').dragTo(page.locator('[data-folder="movidas"]'));
+  await page.locator('[data-request="movidas/productos-renombrados-copia.citrus.yaml"]').waitFor();
+  await page.locator('.tab .label[title="movidas/productos-renombrados-copia.citrus.yaml"]').waitFor();
+  const movidas = page.locator('[data-folder="movidas"]');
+  await movidas.hover();
+  await movidas.locator('[aria-label="Renombrar carpeta"]').click();
+  await page.locator(".modal input").first().fill("Archivadas");
+  await page.locator(".modal input").first().press("Enter");
+  await page.locator('[data-request="archivadas/productos-renombrados-copia.citrus.yaml"]').waitFor();
+  await page.locator('.tab .label[title="archivadas/productos-renombrados-copia.citrus.yaml"]').waitFor();
+  const exported = path.join(temp, "tienda.postman_collection.json");
+  await appHandle.evaluate(({ dialog }, file) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
+  }, exported);
+  const tiendaRow = page.locator('[data-folder="tienda"]');
+  await tiendaRow.hover();
+  await tiendaRow.locator('[aria-label="Exportar a Postman o cURL"]').click();
+  await page.locator('[data-export="postman"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("Exportadas")));
+  const collection = JSON.parse(await fs.readFile(exported, "utf8"));
+  assert.ok(collection.item.some((i) => i.name === "Crear producto"), "falta Crear producto en la colección");
+  assert.ok(collection.variable.some((v) => v.key === "baseUrl"));
+  await page.locator(".modal .btn", { hasText: "Listo" }).click({ timeout: 2000 }).catch(() => {});
+
+  step("variables desde AWS en el editor de entornos");
+  await page.locator('[aria-label="Editar entornos y secretos"]').first().click();
+  const awsRows = page.locator("[data-aws-vars] .kv-row");
+  await awsRows.first().locator("input.input").nth(0).fill("dbPassword");
+  await awsRows.first().locator("input.input").nth(1).fill("ssm:/demo/db");
+  await page.locator(".modal .btn", { hasText: "Guardar entorno" }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("Entorno guardado")));
+  assert.match(await fs.readFile(envFile, "utf8"), /awsVariables:\s+dbPassword: ssm:\/demo\/db/);
+  await page.screenshot({ path: path.join(shots, "variables-aws.png") });
+  await page.locator(".modal .btn", { hasText: "Cerrar" }).click();
 
   const resPane = page.locator('[data-pane="response"]');
   step("proxy del sistema: llega a un host que solo el proxy conoce");
@@ -274,6 +373,7 @@ try {
   await appHandle.close().catch(() => {});
   api.close();
   proxy.close();
+  fakeAws.close();
   await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
 }
 process.exit(failed ? 1 : 0);

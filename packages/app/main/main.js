@@ -34,6 +34,13 @@ import {
   readRequest,
   renameRequest,
   duplicateRequest,
+  moveRequest,
+  renameFolder,
+  exploreLogs,
+  listLambdaFunctions,
+  exportPostman,
+  exportCurl,
+  clearAwsVariableCache,
   requestPath,
   resolveEnvironment,
   runFolder,
@@ -330,6 +337,35 @@ const api = {
   createRequest: ({ folder, name }) => createRequest(needWorkspace(), { folder, name }),
   renameRequest: ({ id, name }) => renameRequest(needWorkspace(), id, name),
   duplicateRequest: ({ id, name }) => duplicateRequest(needWorkspace(), id, name),
+  moveRequest: ({ id, folder }) => moveRequest(needWorkspace(), id, folder),
+  renameFolder: ({ folder, name }) => renameFolder(needWorkspace(), folder, name),
+  async listFunctions({ env }) {
+    const aws = env ? (await resolveEnvironment(needWorkspace(), env, store, currentCaptures(), { loadAws: false })).aws : {};
+    return listLambdaFunctions({ aws });
+  },
+  exploreLogs: ({ env, functionName, sinceMinutes, text, onlyErrors }) =>
+    exploreLogs({ root: needWorkspace(), envId: env ?? null, store, captures: currentCaptures(), functionName, sinceMinutes, text, onlyErrors }),
+  async exportFolder({ folder, format, env }) {
+    const root = needWorkspace();
+    const label = folder ? folder.split("/").pop() : path.basename(root);
+    const postman = format === "postman";
+    const out = postman
+      ? await exportPostman({ root, folder: folder ?? "", name: label, envId: env ?? null, store })
+      : await exportCurl({ root, folder: folder ?? "", envId: env ?? null, store });
+    if (!out.count) throw new CitrusError("NOTHING_TO_EXPORT", "No hay requests HTTP para exportar en esa carpeta.");
+    const result = await dialog.showSaveDialog(win, {
+      title: postman ? "Exportar a Postman" : "Exportar a cURL",
+      defaultPath: postman ? `${label}.postman_collection.json` : `${label}-curl.sh`,
+      filters: postman ? [{ name: "Colección de Postman", extensions: ["json"] }] : [{ name: "Comandos curl", extensions: ["sh", "txt"] }],
+    });
+    if (result.canceled || !result.filePath) return { saved: false };
+    await fs.writeFile(result.filePath, out.text);
+    return { saved: true, path: result.filePath, count: out.count, warnings: out.warnings };
+  },
+  clearAwsCache() {
+    clearAwsVariableCache();
+    return true;
+  },
   createFolder: ({ parent, name }) => createFolder(needWorkspace(), { parent, name }),
   async deleteRequest({ id }) {
     // A la papelera, no un borrado definitivo.
@@ -342,8 +378,8 @@ const api = {
   snippet: ({ model, env, language }) => buildSnippet({ root: needWorkspace(), model, envId: env ?? null, store, language }),
   runFolder: ({ folder, env }) =>
     runFolder({ root: needWorkspace(), folder, envId: env ?? null, store, captures: currentCaptures(), confirm: askProtected, trust: askTrust }),
-  envSave: ({ id, variables, protected: isProtected, extends: parent, aws, db }) =>
-    saveEnvironment(needWorkspace(), id, { variables, protected: isProtected, extends: parent, aws, db }),
+  envSave: ({ id, variables, protected: isProtected, extends: parent, aws, awsVariables, db }) =>
+    saveEnvironment(needWorkspace(), id, { variables, protected: isProtected, extends: parent, aws, awsVariables, db }),
   envCreate: ({ id }) => createEnvironment(needWorkspace(), id),
   secretSet: ({ env, name, value }) => setSecret(needWorkspace(), env, name, value, store),
   secretDelete: ({ env, name }) => deleteSecret(needWorkspace(), env, name, store),

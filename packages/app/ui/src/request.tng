@@ -590,8 +590,11 @@ fn draw_logs_steps(wrap, m) {
   let three = append(list, el("li"))
   add_text(three, "Envía la request. En la respuesta aparece la pestaña Logs con lo que escribió tu función, su duración, la memoria y si hubo cold start. Los logs tardan unos segundos en llegar.")
 
-  let more = append(box_el, el("a", "link", "Ver la guía completa de CloudWatch"))
-  on(more, "click", || open_guide("Logs de CloudWatch"))
+  let links = append(box_el, el("div", "logs-links"))
+  let explore = append(links, el("a", "link", "Buscar en los logs de esta Lambda sin enviar nada"))
+  on(explore, "click", || app.ui.logs_explorer(if m.observe != nil { m.observe.lambda ?? "" } else { "" }))
+  let more = append(links, el("a", "link", "Qué es CloudWatch"))
+  on(more, "click", || open_guide("Qué es CloudWatch"))
 }
 
 fn draw_observe_logs(wrap, tab, spec, set_key) {

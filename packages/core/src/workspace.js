@@ -171,6 +171,39 @@ export async function duplicateRequest(root, id, name) {
   return { id: folder === "." ? fileName : `${folder}/${fileName}` };
 }
 
+const cleanFolder = (folder) => String(folder ?? "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+
+/** Mueve una request a otra carpeta de la colección. Devuelve su id nuevo. */
+export async function moveRequest(root, id, folder = "") {
+  const from = await requestPath(root, id);
+  const base = path.join(root, COLLECTIONS_DIR);
+  const target = cleanFolder(folder);
+  const dir = target ? await insideRoot(base, target) : base;
+  if (!(await exists(dir))) throw new CitrusError("FOLDER_NOT_FOUND", `No existe la carpeta ${target}.`);
+  if (path.resolve(path.dirname(from)) === path.resolve(dir)) return { id };
+  const fileName = await freeName(dir, path.basename(from).slice(0, -REQUEST_EXT.length), REQUEST_EXT);
+  await fs.rename(from, path.join(dir, fileName));
+  return { id: target ? `${target}/${fileName}` : fileName };
+}
+
+/** Renombra una carpeta. Las requests de adentro cambian de id: `from` y `to` dicen cómo. */
+export async function renameFolder(root, folder, name) {
+  const clean = cleanName(name);
+  const current = cleanFolder(folder);
+  if (!current) throw new CitrusError("BAD_FOLDER", "Elige una carpeta.");
+  const base = path.join(root, COLLECTIONS_DIR);
+  const from = await insideRoot(base, current);
+  if (!(await exists(from))) throw new CitrusError("FOLDER_NOT_FOUND", `No existe la carpeta ${current}.`);
+  const slug = slugify(clean);
+  const parent = path.posix.dirname(current);
+  const next = parent === "." ? slug : `${parent}/${slug}`;
+  if (next === current) return { from: current, to: current };
+  const to = await insideRoot(base, next);
+  if (await exists(to)) throw new CitrusError("FOLDER_EXISTS", `Ya hay una carpeta llamada ${slug} en ese lugar.`);
+  await fs.rename(from, to);
+  return { from: current, to: next };
+}
+
 /** Crea una request en una carpeta de la colección. Nunca pisa un archivo existente. */
 export async function createRequest(root, { folder = "", name, model, extra } = {}) {
   const base = path.join(root, COLLECTIONS_DIR);

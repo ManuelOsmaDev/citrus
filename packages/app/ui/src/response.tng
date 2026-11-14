@@ -170,7 +170,7 @@ fn draw_diff(host, tab, res) {
   editor = diff_create(box_el, tab.prev, res.body.text, res.body.language)
 }
 
-fn draw_log_rows(host, logs) {
+export fn draw_log_rows(host, logs) {
   let list = append(host, el("div", "log-list"))
   for l in logs {
     let row = append(list, el("div", "log-row"))

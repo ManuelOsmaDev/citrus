@@ -18,6 +18,15 @@ body:
     productId: 42',
   },
   {
+    titulo: "Organizar y compartir",
+    texto: [
+      'Pasa el mouse sobre una request para renombrarla, duplicarla o borrarla. También puedes hacer doble clic en su nombre para renombrarla. Duplicar copia todo: headers, body, tests, scripts y Observar.',
+      'Para mover una request a otra carpeta, arrástrala sobre la carpeta. Si la sueltas en el espacio vacío de abajo, queda en la raíz de la colección. Las carpetas se renombran con el lápiz que aparece al pasar el mouse.',
+      'Para compartir con alguien que no usa Citrus, pulsa el ícono de descarga de una carpeta, o `Ctrl+K` y Exportar. Elige una colección de Postman o un archivo con comandos curl. Los secretos nunca se exportan.',
+    ],
+    codigo: nil,
+  },
+  {
     titulo: "Entornos y secretos",
     texto: [
       'Un entorno es un archivo en `environments/` con sus variables: local, staging, producción. Cámbialo arriba a la derecha y edítalo con el ícono de ajustes que tiene al lado.',
@@ -82,6 +91,36 @@ aws:
   region: us-east-1',
   },
   {
+    titulo: "Variables desde AWS",
+    texto: [
+      'Si tu empresa guarda contraseñas o llaves en AWS Parameter Store o Secrets Manager, Citrus puede leerlas de ahí. Así no las copias a mano y siempre usas el valor actual.',
+      'En el editor de entornos, en Variables desde AWS, escribe el nombre que vas a usar como `{{nombre}}` y de dónde sale: `ssm:/ruta/del/parametro` o `secret:nombre-del-secreto`. Si el secreto es un JSON, agrega `#clave` para usar solo ese campo.',
+      'Citrus las lee al enviar, con el perfil y la región del entorno, y las recuerda 5 minutos. Se tratan como secretos: no se escriben en archivos, se ocultan en pantalla y no se exportan. Tu usuario necesita `ssm:GetParameter` o `secretsmanager:GetSecretValue`.',
+    ],
+    codigo: '# environments/dev.yaml
+awsVariables:
+  dbPassword: ssm:/miapp/dev/db-password
+  apiKey: secret:miapp/dev/api#apiKey
+
+# En una request
+headers:
+  X-Api-Key: "{{apiKey}}"',
+  },
+  {
+    titulo: "Qué es CloudWatch",
+    texto: [
+      'Tu Lambda corre en servidores de AWS, no en tu PC, así que no ves su consola. Todo lo que tu código escribe con `console.log` o `console.error` lo guarda AWS en un servicio llamado CloudWatch Logs. Eso son los logs.',
+      'Cada vez que alguien llama a tu Lambda se crea una invocación con su propio id. AWS marca su inicio con START y su fin con END, y agrega un REPORT con cuánto tardó, cuánta memoria usó y, si arrancó en frío, cuánto tardó en arrancar.',
+      'Un cold start pasa cuando la Lambda llevaba un rato sin usarse y AWS tiene que prepararla de nuevo. Esa invocación tarda más. Las siguientes, mientras sigan llegando seguidas, son más rápidas.',
+      'Los logs de cada función se guardan en un grupo llamado `/aws/lambda/nombre-de-la-funcion`. Citrus los lee de dos formas: después de enviar una request, desde la pestaña Observar, o buscando directamente con `Ctrl+K` y Buscar en los logs de una Lambda.',
+    ],
+    codigo: 'START RequestId: 8f2c1a Version: $LATEST
+2026-11-14T10:00:00Z  8f2c1a  INFO   Creando pedido 42
+2026-11-14T10:00:00Z  8f2c1a  ERROR  Error: no hay stock
+END RequestId: 8f2c1a
+REPORT RequestId: 8f2c1a  Duration: 41 ms  Max Memory Used: 88 MB  Init Duration: 210 ms',
+  },
+  {
     titulo: "Invocar una Lambda",
     texto: [
       'Crea una request de tipo Lambda. En modo `remote` invoca la función real en AWS. En modo `local` corre tu handler en tu PC, con las variables del entorno.',
@@ -101,7 +140,7 @@ mode: remote
   {
     titulo: "Logs de CloudWatch",
     texto: [
-      'Esto es lo que más distingue a Citrus. En la pestaña Observar de una request HTTP activa los logs y escribe el nombre de tu Lambda.',
+      'Esto es lo que más distingue a Citrus: ver los logs de la invocación exacta que provocó tu request. En la pestaña Observar de una request HTTP activa los logs y escribe el nombre de la Lambda que atiende esa URL.',
       'Después de enviar, Citrus busca esa invocación en CloudWatch y muestra lo que escribió tu función, la duración, la memoria y el cold start, junto a la respuesta.',
       'Encuentra la invocación con el id que trae la respuesta. Si no hay id y corrieron varias invocaciones en ese momento, te deja elegir cuál es.',
     ],
@@ -111,6 +150,15 @@ mode: remote
 assert:
   - logs.errors == 0
   - lambda.duration < 500',
+  },
+  {
+    titulo: "Buscar en los logs",
+    texto: [
+      'Con `Ctrl+K` y Buscar en los logs de una Lambda ves las últimas invocaciones de una función sin enviar nada. Sirve para revisar qué pasó en producción o encontrar un error que alguien reportó.',
+      'Escribe el nombre de la función. Si tu usuario tiene el permiso `lambda:ListFunctions`, Citrus te sugiere los nombres mientras escribes. Elige el periodo y, si quieres, un texto a buscar o solo las que fallaron.',
+      'Cada invocación muestra la hora, si salió bien, falló o se pasó del tiempo, cuánto tardó, la memoria y si hubo cold start. Haz clic en ella para ver sus logs.',
+    ],
+    codigo: nil,
   },
   {
     titulo: "Qué cambió en MySQL",

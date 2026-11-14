@@ -87,6 +87,20 @@ export fn activate_tab(id) {
   app.ui.workspace()
 }
 
+// Cuando una request cambia de archivo, al moverla o renombrar su carpeta, su pestaña la sigue.
+export fn retarget_tabs(f) {
+  for t in app.tabs {
+    let next = f(t.id)
+    if next != t.id {
+      if app.active == t.id { app.active = next }
+      t.id = next
+    }
+  }
+  remember_tabs()
+  app.ui.tabs()
+  app.ui.workspace()
+}
+
 fn add_tab(id, r) {
   let m = r.model
   let tab = {

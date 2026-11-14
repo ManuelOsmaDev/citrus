@@ -1,0 +1,156 @@
+// Explorador de logs: las últimas invocaciones de una Lambda en CloudWatch, sin enviar nada.
+import { api, app } from "./state.tng"
+import { btn, field, fmt_ms, modal, select_el, span, text_input, toast } from "./widgets.tng"
+import { draw_log_rows } from "./response.tng"
+import { open_guide } from "./guia.tng"
+
+let EXPLICACION = [
+  "Cada vez que alguien llama a tu Lambda, AWS la ejecuta y guarda todo lo que tu código escribe con console.log o console.error. Eso son los logs, y AWS los guarda en un servicio que se llama CloudWatch Logs.",
+  "Cada ejecución se llama invocación y tiene su propio id. Al terminar, AWS agrega una línea REPORT con cuánto tardó, cuánta memoria usó y si arrancó en frío. Un cold start es cuando la Lambda llevaba un rato sin usarse y tarda más en arrancar.",
+  "Los logs de una función están en el grupo /aws/lambda/nombre-de-la-funcion. Aquí escribes el nombre y Citrus te muestra sus últimas invocaciones, sin entrar a la consola de AWS.",
+  "Para ver los logs justo de una request que envías, usa la pestaña Observar de esa request.",
+]
+
+let PERIODOS = [["15", "Últimos 15 minutos"], ["60", "Última hora"], ["360", "Últimas 6 horas"], ["1440", "Último día"], ["10080", "Últimos 7 días"]]
+
+fn badge(cls, text) {
+  span("inv-badge {cls}", text)
+}
+
+fn draw_invocation(host, inv, open_now) {
+  let card = append(host, el("div", "inv"))
+  attr(card, "data-invocation", inv.requestId)
+  let head = append(card, el("button", "inv-head"))
+  append(head, span("inv-time", if inv.ts != nil { fmt_time(inv.ts) } else { "–" }))
+  if inv.timedOut {
+    append(head, badge("err", "Timeout"))
+  } else if inv.errors > 0 {
+    append(head, badge("err", "Error"))
+  } else if inv.finished {
+    append(head, badge("ok", "OK"))
+  } else {
+    append(head, badge("", "Corriendo"))
+  }
+  if inv.coldStart { append(head, badge("cold", "Cold start {fmt_ms(inv.init)}")) }
+  if inv.duration != nil { append(head, span("inv-meta", fmt_ms(inv.duration))) }
+  if inv.memory != nil { append(head, span("inv-meta", "{inv.memory} de {inv.memorySize ?? "?"} MB")) }
+  append(head, el("div", "grow"))
+  let id_el = append(head, span("inv-id", inv.requestId.slice(0, 8)))
+  attr(id_el, "title", "Id de la invocación: {inv.requestId}")
+  let detail = append(card, el("div", "inv-logs"))
+  var is_open = open_now
+  toggle_class(card, "open", is_open)
+  draw_log_rows(detail, inv.logs)
+  on(head, "click", || {
+    is_open = !is_open
+    toggle_class(card, "open", is_open)
+  })
+}
+
+export fn open_logs_explorer(start_fn = "") {
+  var fn_name = start_fn ?? ""
+  var minutes = "60"
+  var text = ""
+  var only_errors = false
+  let body = el("div", "explorer")
+
+  let intro = append(body, el("details", "explorer-intro"))
+  if fn_name.is_empty() { attr(intro, "open", "") }
+  append(intro, el("summary", nil, "Qué es CloudWatch y qué ves aquí"))
+  for p in EXPLICACION { append(intro, el("p", nil, p)) }
+  let more = append(intro, el("a", "link", "Leer la guía de CloudWatch"))
+  on(more, "click", || open_guide("Qué es CloudWatch"))
+
+  let form = append(body, el("div", "explorer-form"))
+  let fn_input = text_input(fn_name, "nombre-de-tu-lambda", |v| {
+    fn_name = v
+  })
+  attr(fn_input, "list", "citrus-lambdas")
+  attr(fn_input, "data-explorer-fn", "1")
+  let options = append(body, el("datalist"))
+  attr(options, "id", "citrus-lambdas")
+  let fn_field = append(form, field("Función Lambda", fn_input))
+  toggle_class(fn_field, "grow", true)
+  append(form, field("Periodo", select_el("input", PERIODOS, minutes, |v| {
+    minutes = v
+  })))
+  let text_input_el = text_input("", "Opcional", |v| {
+    text = v
+  })
+  attr(text_input_el, "data-explorer-text", "1")
+  append(form, field("Buscar texto", text_input_el))
+
+  let line = append(body, el("div", "explorer-line"))
+  let errors_row = append(line, el("label", "check-row"))
+  let check = append(errors_row, el("input"))
+  attr(check, "type", "checkbox")
+  attr(check, "data-explorer-errors", "1")
+  on(check, "change", || {
+    only_errors = checked(check)
+  })
+  append(errors_row, span(nil, "Solo las que fallaron"))
+  let fn_hint = append(line, el("div", "hint grow", "Buscando tus funciones…"))
+  let search_btn = append(line, btn("primary", "Buscar", || search(), "search"))
+  attr(search_btn, "data-explorer-search", "1")
+
+  let results = append(body, el("div", "explorer-results"))
+  append(results, el("div", "explorer-empty", "Escribe el nombre de tu Lambda y pulsa Buscar."))
+
+  fn draw_results(r) {
+    clear(results)
+    let where = append(results, el("div", "hint"))
+    add_text(where, "Grupo de logs ")
+    append(where, el("code", nil, r.logGroup))
+    add_text(where, " en la región ")
+    append(where, el("code", nil, r.region))
+    add_text(where, ". Clic en una invocación para ver o esconder sus logs.")
+    if r.invocations.is_empty() {
+      let empty = append(results, el("div", "explorer-empty"))
+      append(empty, el("strong", nil, "No hubo invocaciones que mostrar"))
+      append(empty, el("p", nil, "Prueba un periodo más largo o quita los filtros. Si nunca aparece nada, revisa que el nombre y la región sean los de tu función, y que se haya ejecutado al menos una vez."))
+      return nil
+    }
+    for (i, inv) in r.invocations.enumerate() { draw_invocation(results, inv, i == 0) }
+    append(results, el("div", "hint", "Las líneas que tu código escribe sin el id de la invocación, como las de algunos loggers, no aparecen aquí. En Observar sí las verás."))
+  }
+
+  fn search() {
+    if fn_name.trim().is_empty() {
+      toast("Escribe el nombre de la Lambda.", "error")
+      return nil
+    }
+    clear(results)
+    append(results, el("div", "explorer-empty", "Buscando en CloudWatch…"))
+    api("exploreLogs", { env: app.env, functionName: fn_name.trim(), sinceMinutes: minutes, text: text, onlyErrors: only_errors }, draw_results, |e| {
+      clear(results)
+      let fail = append(results, el("div", "explorer-empty is-error"))
+      append(fail, el("strong", nil, "No se pudo leer CloudWatch"))
+      append(fail, el("p", nil, e.message))
+    })
+  }
+
+  on(fn_input, "keydown", |e| {
+    if e.key == "Enter" { search() }
+  })
+  on(text_input_el, "keydown", |e| {
+    if e.key == "Enter" { search() }
+  })
+
+  api("listFunctions", { env: app.env }, |r| {
+    for name in r.functions {
+      let o = append(options, el("option"))
+      attr(o, "value", name)
+    }
+    if r.error != nil {
+      set_text(fn_hint, r.error)
+    } else if r.functions.is_empty() {
+      set_text(fn_hint, "No encontré Lambdas en esta cuenta y región. Revisa el perfil y la región del entorno.")
+    } else {
+      set_text(fn_hint, "{r.functions.len()} funciones en tu cuenta. Empieza a escribir para elegir una.")
+    }
+  }, |e| set_text(fn_hint, e.message))
+
+  modal("Logs de Lambda", body, [], { wide: true })
+  focus(fn_input)
+  if !fn_name.is_empty() { search() }
+}
