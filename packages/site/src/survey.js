@@ -56,6 +56,12 @@
           return null;
         },
 
+        // Cuenta un clic como evento en GoatCounter, sin cookies. Si un bloqueador lo impide, no pasa nada.
+        count_event(name) {
+          try { globalThis.goatcounter?.count?.({ path: String(name), title: String(name), event: true }); } catch { /* bloqueado */ }
+          return null;
+        },
+
         // Envía las respuestas. Google no deja leer la respuesta (no-cors), así que basta con que salga.
         send_survey(country, area, use) {
           const body = new URLSearchParams();
